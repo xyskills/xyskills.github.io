@@ -5,6 +5,7 @@
     <!-- Single canvas renders everything: video bg + distortion + effects -->
     <canvas ref="canvasRef" class="main-canvas" />
     <DebugOverlay
+      ref="debugOverlayRef"
       :hands="currentHands"
       :gestures="currentGestures"
       :fps="fps"
@@ -13,7 +14,7 @@
       :rawMetrics="rawHandMetrics"
       @toggle-effects="effectsEnabled = !effectsEnabled"
     />
-    <HUD :activeAbilities="activeAbilityNames" />
+    <HUD :activeAbilities="activeAbilityNames" :abilityDebug="abilityDebugState" />
     <RecordingControls @start="onRecStart" @stop="onRecStop" />
     <div v-if="loading" class="loading-overlay">
       <div class="loading-text">Initializing Infinity...</div>
@@ -41,21 +42,22 @@ import DebugOverlay from './DebugOverlay.vue'
 import HUD from './HUD.vue'
 import RecordingControls from './RecordingControls.vue'
 import { RecordingManager } from '@/core/RecordingManager'
+import type { RecordingLayout } from '@/core/RecordingManager'
 import type { AbilityDebugState } from '@/core/AbilityManager'
 import { getNormalizedPinchDistance, getHandSize } from '@/utils/landmark-utils'
 import { HandLandmark } from '@/types/hand'
 
-const videoRef = ref<HTMLVideoElement>()
-const canvasRef = ref<HTMLCanvasElement>()
-const loading = ref(true)
-const currentHands = ref<HandData[]>([])
-const currentGestures = ref<GestureEvent[]>([])
+const videoRef         = ref<HTMLVideoElement>()
+const canvasRef        = ref<HTMLCanvasElement>()
+const debugOverlayRef  = ref<InstanceType<typeof DebugOverlay>>()
+const loading          = ref(true)
+const currentHands     = ref<HandData[]>([])
+const currentGestures  = ref<GestureEvent[]>([])
 const activeAbilityNames = ref<string[]>([])
-const fps = ref(0)
-const effectsEnabled = ref(true)
+const fps              = ref(0)
+const effectsEnabled   = ref(true)
 const abilityDebugState = ref<AbilityDebugState | null>(null)
 
-// Raw per-frame hand metrics for debug overlay
 const rawHandMetrics = ref<{
   normPinch: number
   wristSpeed: number
@@ -65,9 +67,12 @@ const rawHandMetrics = ref<{
 
 const recordingManager = new RecordingManager()
 
-function onRecStart(opts: { withEffects: boolean; withoutEffects: boolean }) {
+function onRecStart(opts: { layout: RecordingLayout; withDebug: boolean }) {
   if (!canvasRef.value || !videoRef.value) return
-  recordingManager.start(canvasRef.value, videoRef.value, opts)
+  const debugCanvas = opts.withDebug
+    ? debugOverlayRef.value?.landmarkCanvas?.value ?? undefined
+    : undefined
+  recordingManager.start(canvasRef.value, videoRef.value, opts, debugCanvas)
 }
 
 function onRecStop() {
@@ -126,20 +131,15 @@ onMounted(async () => {
 
   eventBus.on('gestureDetected', (event) => {
     detectedThisFrame.add(event.type)
-    const existing = currentGestures.value.findIndex((g) => g.type === event.type)
-    if (existing >= 0) {
-      currentGestures.value[existing] = event
-    } else {
-      currentGestures.value.push(event)
-    }
-    currentGestures.value = currentGestures.value.filter(
-      (g) => {
-        const age = performance.now() - g.timestamp
-        // Flick gestures linger longer so they're visible in debug
+    // Single reactive mutation — avoids Vue scheduler confusion from multiple rapid mutations
+    const now = performance.now()
+    currentGestures.value = [
+      ...currentGestures.value.filter(g => {
         const ttl = g.type.includes('flick') ? 1500 : 600
-        return age < ttl
-      }
-    )
+        return now - g.timestamp < ttl && g.type !== event.type
+      }),
+      event,
+    ]
   })
 
   try {

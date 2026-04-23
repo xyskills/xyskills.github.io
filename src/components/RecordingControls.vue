@@ -5,18 +5,33 @@
     </button>
 
     <div v-if="expanded" class="rec-body">
+      <!-- Layout selector -->
+      <div class="rec-section-label">Layout</div>
+      <div class="layout-grid">
+        <button
+          v-for="l in layouts"
+          :key="l.value"
+          class="layout-btn"
+          :class="{ selected: layout === l.value }"
+          :disabled="recording"
+          @click="layout = l.value"
+          :title="l.label"
+        >
+          <span class="layout-icon">{{ l.icon }}</span>
+          <span class="layout-name">{{ l.label }}</span>
+        </button>
+      </div>
+
+      <!-- Options -->
+      <div class="rec-section-label">Options</div>
       <label class="rec-option">
-        <input type="checkbox" v-model="withEffects" :disabled="recording" />
-        <span>With Effects</span>
+        <input type="checkbox" v-model="withDebug" :disabled="recording" />
+        <span>Overlay Debug</span>
       </label>
-      <label class="rec-option">
-        <input type="checkbox" v-model="withoutEffects" :disabled="recording" />
-        <span>Without Effects</span>
-      </label>
+
       <button
         class="rec-btn"
         :class="{ stop: recording }"
-        :disabled="!withEffects && !withoutEffects && !recording"
         @click="toggleRecording"
       >
         {{ recording ? 'STOP' : 'REC' }}
@@ -28,20 +43,27 @@
 
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue'
+import type { RecordingLayout } from '@/core/RecordingManager'
 
 const emit = defineEmits<{
-  start: [opts: { withEffects: boolean; withoutEffects: boolean }]
-  stop: []
+  start: [opts: { layout: RecordingLayout; withDebug: boolean }]
+  stop:  []
 }>()
 
-const expanded = ref(false)
-const recording = ref(false)
-const withEffects = ref(true)
-const withoutEffects = ref(false)
-const elapsed = ref(0)
-let timer: ReturnType<typeof setInterval> | null = null
+const layouts: { value: RecordingLayout; label: string; icon: string }[] = [
+  { value: 'single',       label: 'Single',    icon: '▣' },
+  { value: 'side-by-side', label: 'Side / Side', icon: '⊞' },
+  { value: 'stacked',      label: 'Stacked',   icon: '⊟' },
+  { value: 'pip',          label: 'PiP',       icon: '⊡' },
+]
 
+const expanded  = ref(false)
+const recording = ref(false)
+const layout    = ref<RecordingLayout>('single')
+const withDebug = ref(false)
+const elapsed   = ref(0)
 const formattedTime = ref('0:00')
+let timer: ReturnType<typeof setInterval> | null = null
 
 function toggleRecording() {
   if (recording.value) {
@@ -50,7 +72,7 @@ function toggleRecording() {
     emit('stop')
   } else {
     recording.value = true
-    elapsed.value = 0
+    elapsed.value   = 0
     formattedTime.value = '0:00'
     timer = setInterval(() => {
       elapsed.value++
@@ -58,7 +80,7 @@ function toggleRecording() {
       const s = elapsed.value % 60
       formattedTime.value = `${m}:${s.toString().padStart(2, '0')}`
     }, 1000)
-    emit('start', { withEffects: withEffects.value, withoutEffects: withoutEffects.value })
+    emit('start', { layout: layout.value, withDebug: withDebug.value })
   }
 }
 
@@ -93,8 +115,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .rec-toggle:hover { border-color: rgba(255,255,255,0.35); }
 
 .rec-icon {
-  width: 14px;
-  height: 14px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   background: #666;
   transition: background 0.2s;
@@ -103,23 +124,64 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   background: #ef4444;
   animation: pulse-rec 1s ease-in-out infinite;
 }
-
 @keyframes pulse-rec {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
-  50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+  0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
 }
 
 .rec-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(0,0,0,0.75);
-  backdrop-filter: blur(12px);
+  background: rgba(0,0,0,0.80);
+  backdrop-filter: blur(14px);
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 12px;
   padding: 14px 16px;
-  min-width: 160px;
+  min-width: 180px;
 }
+
+.rec-section-label {
+  font-size: 9px;
+  font-family: monospace;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.3);
+  text-transform: uppercase;
+}
+
+/* 2×2 layout grid */
+.layout-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.layout-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 4px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+  cursor: pointer;
+  color: rgba(255,255,255,0.55);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  transition: all 0.15s;
+}
+.layout-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.9);
+}
+.layout-btn.selected {
+  border-color: #7c3aed;
+  background: rgba(124,58,237,0.18);
+  color: #c4b5fd;
+}
+.layout-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.layout-icon { font-size: 16px; }
+.layout-name { font-size: 9px; font-weight: 600; letter-spacing: 0.5px; }
 
 .rec-option {
   display: flex;
@@ -130,11 +192,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   color: rgba(255,255,255,0.8);
   cursor: pointer;
 }
-
 .rec-option input[type="checkbox"] {
   accent-color: #7c3aed;
-  width: 14px;
-  height: 14px;
+  width: 14px; height: 14px;
 }
 
 .rec-btn {
@@ -149,10 +209,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   color: #fff;
   background: #7c3aed;
   transition: all 0.2s;
+  margin-top: 4px;
 }
-.rec-btn:hover:not(:disabled) { background: #6d28d9; }
-.rec-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-.rec-btn.stop { background: #ef4444; }
+.rec-btn:hover { background: #6d28d9; }
+.rec-btn.stop  { background: #ef4444; }
 .rec-btn.stop:hover { background: #dc2626; }
 
 .rec-timer {

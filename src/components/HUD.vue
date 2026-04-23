@@ -29,6 +29,16 @@
       </div>
     </div>
 
+    <!-- Domain expansion active -->
+    <Transition name="domain-fade">
+      <div v-if="domainActive" class="domain-overlay">
+        <div class="domain-title">INFINITE VOID</div>
+        <div class="domain-bar-track">
+          <div class="domain-bar-fill" :style="{ width: (domainProgress * 100) + '%' }"></div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Bottom hint -->
     <div class="hint-row">
       <span>Point finger → Blue / Red</span>
@@ -68,9 +78,9 @@ const showMergeBar = computed(() =>
   !activeSet.value.has(GestureType.HANDS_MERGED)
 )
 
-const mergePercent = computed(() =>
-  props.abilityDebug ? Math.round(props.abilityDebug.mergeProgress * 100) : 0
-)
+const mergePercent  = computed(() => props.abilityDebug ? Math.round(props.abilityDebug.mergeProgress * 100) : 0)
+const domainActive  = computed(() => props.abilityDebug?.domainActive ?? false)
+const domainProgress = computed(() => props.abilityDebug?.domainProgress ?? 0)
 </script>
 
 <style scoped>
@@ -202,6 +212,47 @@ const mergePercent = computed(() =>
   border-radius: 2px;
   transition: width 0.1s linear;
 }
+
+/* ── Domain Expansion ── */
+.domain-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.domain-title {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  color: #93c5fd;
+  text-shadow: 0 0 20px rgba(96,165,250,0.8), 0 0 40px rgba(96,165,250,0.4);
+  animation: domain-pulse 1.2s ease-in-out infinite;
+}
+.domain-bar-track {
+  width: 220px;
+  height: 2px;
+  background: rgba(96,165,250,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.domain-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1d4ed8, #60a5fa, #1d4ed8);
+  border-radius: 2px;
+  transition: width 0.2s linear;
+}
+@keyframes domain-pulse {
+  0%, 100% { opacity: 0.85; text-shadow: 0 0 20px rgba(96,165,250,0.8), 0 0 40px rgba(96,165,250,0.4); }
+  50%       { opacity: 1;    text-shadow: 0 0 30px rgba(96,165,250,1),   0 0 60px rgba(96,165,250,0.6); }
+}
+.domain-fade-enter-active, .domain-fade-leave-active { transition: opacity 0.6s ease; }
+.domain-fade-enter-from,  .domain-fade-leave-to      { opacity: 0; }
 
 /* ── Bottom hint ── */
 .hint-row {

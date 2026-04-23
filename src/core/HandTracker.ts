@@ -10,6 +10,11 @@ export class HandTracker {
   private lastVideoTime = -1
   private animationFrameId = 0
 
+  // Offscreen canvas for MediaPipe — fixes "NORM_RECT without IMAGE_DIMENSIONS" warning
+  // by giving the detector an element with explicit pixel dimensions
+  private detectionCanvas: HTMLCanvasElement | null = null
+  private detectionCtx: CanvasRenderingContext2D | null = null
+
   constructor(videoElement: HTMLVideoElement, eventBus: EventBus) {
     this.videoElement = videoElement
     this.eventBus = eventBus
@@ -34,13 +39,13 @@ export class HandTracker {
   }
 
   private async startCamera(): Promise<void> {
-    // Request highest available resolution for maximum quality
+    // Request 2K/1080p at 60fps — best quality for hand tracking + recording
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width:  { ideal: 3840, min: 1280 },
-        height: { ideal: 2160, min: 720  },
+        width:     { ideal: 2560, min: 1280 },
+        height:    { ideal: 1440, min: 720  },
         facingMode: 'user',
-        frameRate: { ideal: 60, min: 30 },
+        frameRate: { ideal: 60,   min: 30   },
       },
     })
     this.videoElement.srcObject = stream
@@ -51,8 +56,8 @@ export class HandTracker {
       }
     })
     const track = stream.getVideoTracks()[0]
-    const settings = track.getSettings()
-    console.log(`Camera: ${settings.width}x${settings.height} @ ${settings.frameRate}fps`)
+    const s = track.getSettings()
+    console.log(`[Camera] ${s.width}x${s.height} @ ${s.frameRate}fps`)
   }
 
   start(): void {
@@ -73,14 +78,27 @@ export class HandTracker {
     const now = performance.now()
     if (this.videoElement.currentTime !== this.lastVideoTime) {
       this.lastVideoTime = this.videoElement.currentTime
-      const result = this.handLandmarker.detectForVideo(this.videoElement, now)
+
+      // Ensure detection canvas matches current video dimensions
+      const vw = this.videoElement.videoWidth  || 640
+      const vh = this.videoElement.videoHeight || 480
+      if (!this.detectionCanvas || this.detectionCanvas.width !== vw || this.detectionCanvas.height !== vh) {
+        this.detectionCanvas = document.createElement('canvas')
+        this.detectionCanvas.width  = vw
+        this.detectionCanvas.height = vh
+        this.detectionCtx = this.detectionCanvas.getContext('2d')!
+      }
+      // Draw current video frame — canvas has explicit dimensions, suppresses NORM_RECT warning
+      this.detectionCtx!.drawImage(this.videoElement, 0, 0, vw, vh)
+
+      const result = this.handLandmarker.detectForVideo(this.detectionCanvas, now)
 
       const hands: HandData[] = []
       for (let i = 0; i < (result.landmarks?.length ?? 0); i++) {
         hands.push({
-          landmarks: result.landmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z })),
+          landmarks:      result.landmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z })),
           worldLandmarks: result.worldLandmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z })),
-          handedness: result.handedness[i][0].categoryName as 'Left' | 'Right',
+          handedness:     result.handedness[i][0].categoryName as 'Left' | 'Right',
         })
       }
 

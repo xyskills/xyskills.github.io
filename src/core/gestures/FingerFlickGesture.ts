@@ -9,31 +9,25 @@ import { getHandByType, getHighestFingerTip, getNormalizedPinchDistance } from '
  * Three-gate shoot gesture (research-validated, false-positive resistant):
  *
  * Gate 1  IDLE → PINCH_HELD
- *   normalizedPinch < 0.25 for >= 4 frames
+ *   normalizedPinch < 0.25 for >= 6 frames
  *
  * Gate 2  PINCH_HELD → THROWING
- *   wrist speed (screen-space, 3-frame smoothed) > 0.40 units/s
+ *   wrist speed (screen-space, 3-frame smoothed) > 0.55 units/s
  *
- * Gate 3  THROWING → FIRE (must happen within 200ms)
+ * Gate 3  THROWING → FIRE (must happen within 150ms)
  *   finger spread ratio > 1.8× the spread recorded at pinch entry
  *   AND spread direction aligns with wrist motion (dot > 0.5)
- *
- * Eliminates:
- *   - Hand open while stationary     → fails Gate 2
- *   - Fast wave without pinch first  → fails Gate 1
- *   - Pinch + fast move, fingers stay curled → fails Gate 3 spread ratio
- *   - Pinch + fast move + fingers open sideways → fails alignment dot
  */
 
 type FlickState = 'IDLE' | 'PINCH_HELD' | 'THROWING'
 
 const PINCH_NORM_THRESHOLD  = 0.25
-const MIN_PINCH_FRAMES       = 4
-const WRIST_SPEED_THRESHOLD  = 0.40
+const MIN_PINCH_FRAMES       = 6     // hold pinch longer before it counts
+const WRIST_SPEED_THRESHOLD  = 0.55  // faster throw required
 const SPREAD_RATIO_THRESHOLD = 1.8
 const ALIGNMENT_DOT_MIN      = 0.50
-const THROW_WINDOW_MS        = 200
-const COOLDOWN_MS            = 600
+const THROW_WINDOW_MS        = 150   // tighter window — must release immediately after throw
+const COOLDOWN_MS            = 800
 const VEL_SMOOTH_FRAMES      = 3
 const WRIST_BUFFER_SIZE      = 6
 

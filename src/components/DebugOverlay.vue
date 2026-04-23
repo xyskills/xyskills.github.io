@@ -191,6 +191,9 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.clearInterval(nowTimer)
 })
+
+// Expose the landmark canvas so RecordingManager can composite it
+defineExpose({ landmarkCanvas })
 </script>
 
 <style scoped>

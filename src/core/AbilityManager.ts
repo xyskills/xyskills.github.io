@@ -8,6 +8,7 @@ import type { GestureEvent } from '@/types/gesture'
 import type { HandData } from '@/types/hand'
 import { ShootEffect } from '@/rendering/effects/ShootEffect'
 import { HollowPurpleEffect } from '@/rendering/effects/HollowPurpleEffect'
+import { InfiniteVoidEffect } from '@/rendering/effects/InfiniteVoidEffect'
 import { MergeBeam } from '@/rendering/effects/MergeBeam'
 import { SoundManager } from '@/core/SoundManager'
 import {
@@ -15,17 +16,16 @@ import {
   getHandByType, getHighestFingerTip,
 } from '@/utils/landmark-utils'
 
-const GRACE_PERIOD_MS    = 400
+const GRACE_PERIOD_MS     = 400
 const POST_SHOOT_BLOCK_MS = 2800
-const FLICK_COOLDOWN_MS  = 400
+const FLICK_COOLDOWN_MS   = 400
+const DOMAIN_DURATION_S   = 10.0   // seconds the Infinite Void stays active
 
-// ── Normalized pinch flick detection (camera-angle independent) ──
-// Approach: normalize pinch distance by hand size (wrist→middle-MCP)
-// Track 3-frame moving average, detect velocity > 2.0/sec on release
-const PINCH_THRESHOLD  = 0.28   // normalized dist below this = pinched
-const OPEN_THRESHOLD   = 0.50   // normalized dist above this = released
-const FLICK_VELOCITY   = 2.0    // min normalized-dist/sec to count as a flick
-const MIN_PINCH_FRAMES = 3      // must hold pinch this many frames
+// ── Normalized pinch flick detection ──
+const PINCH_THRESHOLD  = 0.28
+const OPEN_THRESHOLD   = 0.50
+const FLICK_VELOCITY   = 2.5    // raised: requires more deliberate release
+const MIN_PINCH_FRAMES = 5      // raised: must hold pinch longer
 
 export interface FlickDebugState {
   normalizedPinch: number
@@ -37,9 +37,11 @@ export interface FlickDebugState {
 
 export interface AbilityDebugState {
   activeAbilities: string[]
-  mergeProgress: number      // 0..1
+  mergeProgress: number
   flickState: FlickDebugState
   recentEvents: { label: string; t: number }[]
+  domainActive: boolean
+  domainProgress: number   // 0..1
 }
 
 export class AbilityManager {
@@ -60,9 +62,14 @@ export class AbilityManager {
   private pinchWasHeld    = false
   private lastFlickTime   = 0
   private prevNormPinch   = 0
-  private normPinchHistory: number[] = []   // 3-frame moving avg buffer
+  private normPinchHistory: number[] = []
   private lastNormPinch = 0
   private lastVelocity  = 0
+
+  // Domain expansion state
+  private domainActive = false
+  private domainEffect: InfiniteVoidEffect | null = null
+  private domainTimer  = 0
 
   // Debug event log (last 8)
   private debugEvents: { label: string; t: number }[] = []
@@ -97,10 +104,14 @@ export class AbilityManager {
         flickCooldown: performance.now() < this.lastFlickTime + FLICK_COOLDOWN_MS,
       },
       recentEvents: [...this.debugEvents],
+      domainActive:   this.domainActive,
+      domainProgress: this.domainActive ? Math.min(this.domainTimer / DOMAIN_DURATION_S, 1) : 0,
     }
   }
 
   private logEvent(label: string): void {
+    // Skip consecutive duplicate labels
+    if (this.debugEvents.length > 0 && this.debugEvents[0].label === label) return
     this.debugEvents.unshift({ label, t: performance.now() })
     if (this.debugEvents.length > 8) this.debugEvents.pop()
   }
@@ -114,14 +125,51 @@ export class AbilityManager {
     }
 
     if (event.type === GestureType.DOMAIN_EXPANSION) {
-      this.logEvent('DOMAIN EXPANSION activated')
-      // TODO: trigger domain expansion effect
+      this.activateDomain()
       return
     }
+
+    // Block all ability gestures while domain is active
+    if (this.domainActive) return
+
     if (event.type === GestureType.HANDS_MERGED) return
     if (this.activeAbilities.has(GestureType.HANDS_MERGED)) return
     if (performance.now() < this.postShootBlockUntil) return
     this.handleAbilityGesture(event)
+  }
+
+  private activateDomain(): void {
+    if (this.domainActive) return
+
+    // Clear all current abilities
+    for (const [key, ability] of this.activeAbilities) {
+      this.sceneManager.removeEffect(ability.getEffect())
+      this.activeAbilities.delete(key)
+      this.lastSeenTime.delete(key)
+    }
+    this.clearMergeBeam()
+    this.pinchHeldFrames  = 0
+    this.pinchWasHeld     = false
+    this.normPinchHistory = []
+
+    this.domainActive = true
+    this.domainTimer  = 0
+    this.domainEffect = new InfiniteVoidEffect()
+    this.sceneManager.addEffect(this.domainEffect)
+    this.domainEffect.spawn()
+    this.soundManager.play('domain')
+    this.logEvent('DOMAIN EXPANSION: Infinite Void')
+  }
+
+  private deactivateDomain(): void {
+    if (!this.domainActive) return
+    if (this.domainEffect) {
+      this.sceneManager.removeEffect(this.domainEffect)
+      this.domainEffect = null
+    }
+    this.domainActive = false
+    this.domainTimer  = 0
+    this.logEvent('Domain: dissipated')
   }
 
   private handleAbilityGesture(event: GestureEvent): void {
@@ -260,6 +308,24 @@ export class AbilityManager {
   }
 
   update(deltaTime: number): void {
+    // ── Domain expansion takes over everything ──
+    if (this.domainActive) {
+      this.domainTimer += deltaTime
+      if (this.domainTimer >= DOMAIN_DURATION_S) {
+        this.deactivateDomain()
+      }
+      // Still tick projectiles in case any were in-flight before domain
+      for (let i = this.projectiles.length - 1; i >= 0; i--) {
+        const proj = this.projectiles[i]
+        proj.update(deltaTime)
+        if (proj.isExpired()) {
+          this.sceneManager.removeEffect(proj)
+          this.projectiles.splice(i, 1)
+        }
+      }
+      return
+    }
+
     this.updateMerge(deltaTime)
 
     const purple = this.activeAbilities.get(GestureType.HANDS_MERGED)
@@ -325,6 +391,7 @@ export class AbilityManager {
   }
 
   removeAbilitiesForMissingHands(detectedGestures: Set<GestureType>): void {
+    if (this.domainActive) return  // domain blocks all ability tracking
     const now = performance.now()
     for (const [type, ability] of this.activeAbilities) {
       if (type === GestureType.HANDS_MERGED) continue

@@ -37,6 +37,13 @@ export class HandRaisedGesture extends Gesture {
       return null
     }
 
+    // Suppress when index+middle up, ring+pinky down → domain expansion pose
+    const indexUp  = lm[HandLandmark.INDEX_FINGER_TIP].y  < lm[HandLandmark.INDEX_FINGER_PIP].y
+    const middleUp = lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y
+    const ringDown  = lm[HandLandmark.RING_FINGER_TIP].y  >= lm[HandLandmark.RING_FINGER_PIP].y
+    const pinkyDown = lm[HandLandmark.PINKY_TIP].y        >= lm[HandLandmark.PINKY_PIP].y
+    if (indexUp && middleUp && ringDown && pinkyDown) return null
+
     // Any finger lifted counts
     const extendedCount = countExtendedFingers(lm)
     if (extendedCount < 1) return null

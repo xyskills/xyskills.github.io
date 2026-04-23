@@ -1,121 +1,189 @@
 /**
- * Dual-stream recording: captures canvas (with effects) and/or raw video (without effects).
- * Uses MediaRecorder + canvas.captureStream() for high-quality WebM output.
+ * Recording with layout composition.
+ *
+ * Layouts:
+ *  single      — effects canvas only
+ *  side-by-side — camera (mirrored) | effects, at native width × 2
+ *  stacked      — effects top | camera bottom (TikTok format)
+ *  pip          — effects fullscreen + camera inset bottom-right
+ *
+ * Quality: VP9 at 50 Mbps (≈ 2K 60fps broadcast quality).
+ * With-debug: composites the landmark canvas on top of the output.
  */
+
+export type RecordingLayout = 'single' | 'side-by-side' | 'stacked' | 'pip'
+
+export interface RecordingStartOpts {
+  layout: RecordingLayout
+  withDebug: boolean
+}
+
 export class RecordingManager {
-  private effectsRecorder: MediaRecorder | null = null
-  private cleanRecorder: MediaRecorder | null = null
-  private effectsChunks: Blob[] = []
-  private cleanChunks: Blob[] = []
-  private cleanCanvas: HTMLCanvasElement | null = null
-  private cleanCtx: CanvasRenderingContext2D | null = null
-  private cleanRafId = 0
-  private videoElement: HTMLVideoElement | null = null
+  private recorder: MediaRecorder | null = null
+  private chunks: Blob[] = []
+  private compositeCanvas: HTMLCanvasElement | null = null
+  private compositeCtx: CanvasRenderingContext2D | null = null
+  private rafId = 0
   private _recording = false
+
+  // sources — kept so the RAF loop can use them
+  private _effectsCanvas: HTMLCanvasElement | null = null
+  private _videoElement: HTMLVideoElement | null = null
+  private _debugCanvas: HTMLCanvasElement | null = null
+  private _opts: RecordingStartOpts = { layout: 'single', withDebug: false }
 
   get recording(): boolean { return this._recording }
 
-  /**
-   * Start recording. Pass flags to select which streams to capture.
-   */
   start(
     effectsCanvas: HTMLCanvasElement,
     videoElement: HTMLVideoElement,
-    opts: { withEffects: boolean; withoutEffects: boolean },
+    opts: RecordingStartOpts,
+    debugCanvas?: HTMLCanvasElement,
   ): void {
     if (this._recording) return
     this._recording = true
+    this._effectsCanvas = effectsCanvas
+    this._videoElement  = videoElement
+    this._debugCanvas   = debugCanvas ?? null
+    this._opts          = opts
 
-    const fps = 60
-    // Prefer VP9 for quality, fall back to VP8
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    // Determine output dimensions
+    const sw = effectsCanvas.width
+    const sh = effectsCanvas.height
+    let outW = sw, outH = sh
+    if (opts.layout === 'side-by-side') { outW = sw * 2 }
+    if (opts.layout === 'stacked')      { outH = sh * 2 }
+
+    this.compositeCanvas = document.createElement('canvas')
+    this.compositeCanvas.width  = outW
+    this.compositeCanvas.height = outH
+    this.compositeCtx = this.compositeCanvas.getContext('2d')!
+
+    const fps  = 60
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9'
       : 'video/webm;codecs=vp8'
-    const videoBitsPerSecond = 12_000_000 // 12 Mbps
+    // 50 Mbps — broadcast quality for 2K 60fps
+    const videoBitsPerSecond = 50_000_000
 
-    if (opts.withEffects) {
-      this.effectsChunks = []
-      const stream = effectsCanvas.captureStream(fps)
-      this.effectsRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
-      this.effectsRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.effectsChunks.push(e.data)
-      }
-      this.effectsRecorder.start(100) // 100ms timeslice
-    }
+    this.chunks = []
+    const stream = this.compositeCanvas.captureStream(fps)
+    this.recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond })
+    this.recorder.ondataavailable = (e) => { if (e.data.size > 0) this.chunks.push(e.data) }
+    this.recorder.start(100)
 
-    if (opts.withoutEffects) {
-      this.cleanChunks = []
-      this.videoElement = videoElement
-
-      // Create offscreen canvas matching video dimensions
-      this.cleanCanvas = document.createElement('canvas')
-      this.cleanCanvas.width = videoElement.videoWidth || 1920
-      this.cleanCanvas.height = videoElement.videoHeight || 1080
-      this.cleanCtx = this.cleanCanvas.getContext('2d')!
-
-      const cleanStream = this.cleanCanvas.captureStream(fps)
-      this.cleanRecorder = new MediaRecorder(cleanStream, { mimeType, videoBitsPerSecond })
-      this.cleanRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.cleanChunks.push(e.data)
-      }
-      this.cleanRecorder.start(100)
-      this.drawCleanFrame()
-    }
+    this.composeFrame()
   }
 
-  private drawCleanFrame(): void {
-    if (!this._recording || !this.cleanCtx || !this.videoElement || !this.cleanCanvas) return
-    // Draw mirrored raw video (same as what user sees)
-    this.cleanCtx.save()
-    this.cleanCtx.translate(this.cleanCanvas.width, 0)
-    this.cleanCtx.scale(-1, 1)
-    this.cleanCtx.drawImage(this.videoElement, 0, 0, this.cleanCanvas.width, this.cleanCanvas.height)
-    this.cleanCtx.restore()
-    this.cleanRafId = requestAnimationFrame(() => this.drawCleanFrame())
+  private composeFrame(): void {
+    if (!this._recording || !this.compositeCtx || !this.compositeCanvas
+        || !this._effectsCanvas || !this._videoElement) return
+
+    const ctx  = this.compositeCtx
+    const ec   = this._effectsCanvas
+    const vid  = this._videoElement
+    const dbg  = this._debugCanvas
+    const W    = this.compositeCanvas.width
+    const H    = this.compositeCanvas.height
+    const sw   = ec.width
+    const sh   = ec.height
+
+    ctx.clearRect(0, 0, W, H)
+
+    switch (this._opts.layout) {
+      case 'single':
+        ctx.drawImage(ec, 0, 0, W, H)
+        break
+
+      case 'side-by-side': {
+        // Left: mirrored raw camera  |  Right: effects
+        ctx.save()
+        ctx.translate(sw, 0); ctx.scale(-1, 1)
+        ctx.drawImage(vid, 0, 0, sw, H)
+        ctx.restore()
+        ctx.drawImage(ec, sw, 0, sw, H)
+        // divider line
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+        ctx.lineWidth = 2
+        ctx.beginPath(); ctx.moveTo(sw, 0); ctx.lineTo(sw, H); ctx.stroke()
+        break
+      }
+
+      case 'stacked': {
+        // Top: effects  |  Bottom: mirrored camera
+        ctx.drawImage(ec, 0, 0, W, sh)
+        ctx.save()
+        ctx.translate(W, sh); ctx.scale(-1, 1)
+        ctx.drawImage(vid, -W, 0, W, sh)
+        ctx.restore()
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+        ctx.lineWidth = 2
+        ctx.beginPath(); ctx.moveTo(0, sh); ctx.lineTo(W, sh); ctx.stroke()
+        break
+      }
+
+      case 'pip': {
+        // Fullscreen effects
+        ctx.drawImage(ec, 0, 0, W, H)
+        // PiP inset: 28% wide, bottom-right
+        const pipW  = Math.round(W * 0.28)
+        const pipH  = Math.round(H * 0.28)
+        const pipX  = W - pipW - 20
+        const pipY  = H - pipH - 20
+        // Rounded clip
+        ctx.save()
+        ctx.beginPath()
+        ctx.roundRect(pipX, pipY, pipW, pipH, 10)
+        ctx.clip()
+        ctx.translate(pipX + pipW, pipY); ctx.scale(-1, 1)
+        ctx.drawImage(vid, 0, 0, pipW, pipH)
+        ctx.restore()
+        // PiP border
+        ctx.save()
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+        ctx.lineWidth = 2
+        ctx.beginPath(); ctx.roundRect(pipX, pipY, pipW, pipH, 10); ctx.stroke()
+        ctx.restore()
+        break
+      }
+    }
+
+    // Debug overlay on top (landmarks canvas)
+    if (this._opts.withDebug && dbg && dbg.width > 0) {
+      ctx.drawImage(dbg, 0, 0, W, H)
+    }
+
+    this.rafId = requestAnimationFrame(() => this.composeFrame())
   }
 
-  /**
-   * Stop recording and trigger downloads for captured streams.
-   */
   async stop(): Promise<void> {
     if (!this._recording) return
     this._recording = false
-    cancelAnimationFrame(this.cleanRafId)
+    cancelAnimationFrame(this.rafId)
 
-    const downloads: Promise<void>[] = []
-
-    if (this.effectsRecorder && this.effectsRecorder.state !== 'inactive') {
-      downloads.push(this.finishRecorder(this.effectsRecorder, this.effectsChunks, 'recording-effects'))
+    if (this.recorder && this.recorder.state !== 'inactive') {
+      await new Promise<void>((resolve) => {
+        this.recorder!.onstop = () => {
+          const blob = new Blob(this.chunks, { type: this.recorder!.mimeType })
+          const url  = URL.createObjectURL(blob)
+          const a    = document.createElement('a')
+          a.href     = url
+          const ts   = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+          const layout = this._opts.layout.replace('-', '_')
+          a.download = `recording_${layout}_${ts}.webm`
+          document.body.appendChild(a); a.click(); document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+          resolve()
+        }
+        this.recorder!.stop()
+      })
     }
-    if (this.cleanRecorder && this.cleanRecorder.state !== 'inactive') {
-      downloads.push(this.finishRecorder(this.cleanRecorder, this.cleanChunks, 'recording-clean'))
-    }
 
-    await Promise.all(downloads)
-
-    this.effectsRecorder = null
-    this.cleanRecorder = null
-    this.cleanCanvas = null
-    this.cleanCtx = null
-    this.videoElement = null
-  }
-
-  private finishRecorder(recorder: MediaRecorder, chunks: Blob[], prefix: string): Promise<void> {
-    return new Promise((resolve) => {
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-        a.download = `${prefix}_${ts}.webm`
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-        resolve()
-      }
-      recorder.stop()
-    })
+    this.recorder         = null
+    this.compositeCanvas  = null
+    this.compositeCtx     = null
+    this._effectsCanvas   = null
+    this._videoElement    = null
+    this._debugCanvas     = null
   }
 }
