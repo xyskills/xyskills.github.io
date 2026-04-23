@@ -24,7 +24,6 @@ export class ShootEffect extends EffectRenderer {
 
     this.distortionType = 0
     this.distortionStrength = 0
-    if (isPurple) this.darkenBackground = true
 
     this.particles = new ParticleSystem({
       count: isPurple ? 600 : 150,

@@ -15,7 +15,13 @@
       @toggle-effects="effectsEnabled = !effectsEnabled"
     />
     <HUD :activeAbilities="activeAbilityNames" :abilityDebug="abilityDebugState" />
-    <RecordingControls @start="onRecStart" @stop="onRecStop" />
+    <RecordingControls
+      @start="onRecStart"
+      @stop="onRecStop"
+      @abort="onRecAbort"
+      @format-change="currentRecFormat = $event"
+    />
+    <FormatGuide v-if="!isRecording" :format="currentRecFormat" />
     <div v-if="loading" class="loading-overlay">
       <div class="loading-text">Initializing Infinity...</div>
     </div>
@@ -41,8 +47,9 @@ import type { HandData } from '@/types/hand'
 import DebugOverlay from './DebugOverlay.vue'
 import HUD from './HUD.vue'
 import RecordingControls from './RecordingControls.vue'
+import FormatGuide from './FormatGuide.vue'
 import { RecordingManager } from '@/core/RecordingManager'
-import type { RecordingLayout } from '@/core/RecordingManager'
+import type { RecordingStartOpts, RecordingFormat } from '@/core/RecordingManager'
 import type { AbilityDebugState } from '@/core/AbilityManager'
 import { getNormalizedPinchDistance, getHandSize } from '@/utils/landmark-utils'
 import { HandLandmark } from '@/types/hand'
@@ -65,18 +72,27 @@ const rawHandMetrics = ref<{
   handSize: number
 }[]>([])
 
-const recordingManager = new RecordingManager()
+const recordingManager  = new RecordingManager()
+const currentRecFormat  = ref<RecordingFormat>('original')
+const isRecording       = ref(false)
 
-function onRecStart(opts: { layout: RecordingLayout; withDebug: boolean }) {
+function onRecStart(opts: RecordingStartOpts) {
   if (!canvasRef.value || !videoRef.value) return
   const debugCanvas = opts.withDebug
     ? debugOverlayRef.value?.landmarkCanvas?.value ?? undefined
     : undefined
   recordingManager.start(canvasRef.value, videoRef.value, opts, debugCanvas)
+  isRecording.value = true
 }
 
 function onRecStop() {
   recordingManager.stop()
+  isRecording.value = false
+}
+
+function onRecAbort() {
+  recordingManager.abort()
+  isRecording.value = false
 }
 
 let eventBus: EventBus
@@ -197,6 +213,7 @@ function startRenderLoop(detectedThisFrame: Set<GestureType>) {
     })
 
     sceneManager.render(dt, effectsEnabled.value)
+    recordingManager.tick()
 
     animationFrameId = requestAnimationFrame(loop)
   }

@@ -1,7 +1,8 @@
 <template>
-  <div class="debug-overlay" v-if="visible">
-    <canvas ref="landmarkCanvas" class="landmark-canvas" />
-    <div class="debug-info">
+  <div class="debug-overlay">
+    <!-- Always mounted so recording can read it; hidden from screen when debug panel is closed -->
+    <canvas ref="landmarkCanvas" class="landmark-canvas" :style="{ opacity: visible ? 1 : 0 }" />
+    <div v-if="visible" class="debug-info">
       <div class="debug-title">
         DEBUG
         <button class="fx-toggle" @click="$emit('toggle-effects')" style="pointer-events:auto">
@@ -132,7 +133,7 @@ function eventDotClass(label: string): string {
 
 function drawLandmarks() {
   const canvas = landmarkCanvas.value
-  if (!canvas || !visible.value) return
+  if (!canvas) return
   const parent = canvas.parentElement
   if (parent) { canvas.width = parent.clientWidth; canvas.height = parent.clientHeight }
   const ctx = canvas.getContext('2d')

@@ -23,25 +23,14 @@ export class HandRaisedGesture extends Gesture {
 
     const lm = hand.landmarks
 
-    // Suppress when index+middle are crossed (domain expansion pose)
-    const mcpSign = lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.MIDDLE_FINGER_MCP].x
-    const tipSign = lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x
-    const handWidth = Math.abs(lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.PINKY_MCP].x)
-    const crossDepth = Math.abs(lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x)
-    if (
-      mcpSign * tipSign < 0 &&
-      lm[HandLandmark.INDEX_FINGER_TIP].y < lm[HandLandmark.INDEX_FINGER_PIP].y &&
-      lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y &&
-      crossDepth > handWidth * 0.08
-    ) {
-      return null
-    }
-
-    // Suppress when index+middle up, ring+pinky down → domain expansion pose
-    const indexUp  = lm[HandLandmark.INDEX_FINGER_TIP].y  < lm[HandLandmark.INDEX_FINGER_PIP].y
-    const middleUp = lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y
-    const ringDown  = lm[HandLandmark.RING_FINGER_TIP].y  >= lm[HandLandmark.RING_FINGER_PIP].y
-    const pinkyDown = lm[HandLandmark.PINKY_TIP].y        >= lm[HandLandmark.PINKY_PIP].y
+    // Suppress when holding the domain expansion pose:
+    // index + middle UP, ring + pinky DOWN, fingers close together.
+    // Checked broadly (no close-together requirement here) so Blue/Red stay
+    // off for the full 3-second hold even if fingers drift slightly apart.
+    const indexUp   = lm[HandLandmark.INDEX_FINGER_TIP].y  < lm[HandLandmark.INDEX_FINGER_PIP].y
+    const middleUp  = lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y
+    const ringDown  = lm[HandLandmark.RING_FINGER_TIP].y   >= lm[HandLandmark.RING_FINGER_PIP].y
+    const pinkyDown = lm[HandLandmark.PINKY_TIP].y         >= lm[HandLandmark.PINKY_PIP].y
     if (indexUp && middleUp && ringDown && pinkyDown) return null
 
     // Any finger lifted counts

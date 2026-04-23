@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(npm create:*)",
+      "Bash(cd /tmp)",
+      "Bash(rm -rf thestrongest-scaffold)",
+      "Bash(npx create-vite@latest thestrongest-scaffold --template vue-ts)",
+      "Bash(npm install:*)",
+      "Bash(curl -L -o \"c:/Users/Ich/Documents/GitHub/TheStrongest/public/models/hand_landmarker.task\" \"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task\")",
+      "Bash(mkdir -p src/core/gestures src/core/abilities src/rendering/effects src/rendering/shaders src/components src/types src/utils .vscode)",
+      "Bash(rm -f src/components/HelloWorld.vue src/style.css src/assets/vue.svg public/vite.svg)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(npm run:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:medium.com)"
+    ]
+  }
+}

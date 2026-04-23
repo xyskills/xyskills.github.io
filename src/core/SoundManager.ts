@@ -1,4 +1,15 @@
-type SoundName = 'blue' | 'red' | 'purple' | 'shoot'
+/**
+ * Synthesized sound effects matching JJK anime.
+ *
+ * Blue  — gravitational implosion: deep vacuum pull, eerie cold shimmer
+ * Red   — explosive reversal: violent burst, distorted growl, crackling fire
+ * Purple — electromagnetic storm: massive sub-bass, crackling electricity,
+ *          metallic resonance, reality-tearing rumble (like a thunderstorm)
+ * Shoot  — projectile launch: sharp whoosh + sonic boom
+ * Domain — Infinite Void activation: deep reality crack, reverse reverb swell
+ */
+
+type SoundName = 'blue' | 'red' | 'purple' | 'shoot' | 'domain'
 
 export class SoundManager {
   private audioContext: AudioContext | null = null
@@ -7,476 +18,406 @@ export class SoundManager {
   private convolver: ConvolverNode | null = null
 
   private getContext(): AudioContext {
-    if (!this.audioContext) {
-      this.audioContext = new AudioContext()
-    }
+    if (!this.audioContext) this.audioContext = new AudioContext()
     return this.audioContext
   }
 
   private getReverb(ctx: AudioContext): ConvolverNode {
     if (!this.convolver) {
-      // Create impulse response for reverb
-      const sampleRate = ctx.sampleRate
-      const length = sampleRate * 1.8
-      const impulse = ctx.createBuffer(2, length, sampleRate)
+      const sr = ctx.sampleRate
+      const len = sr * 2.2
+      const buf = ctx.createBuffer(2, len, sr)
       for (let ch = 0; ch < 2; ch++) {
-        const data = impulse.getChannelData(ch)
-        for (let i = 0; i < length; i++) {
-          const t = i / sampleRate
-          // Exponential decay with early reflections
-          data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 3.5) * (1 + 0.5 * Math.exp(-t * 20))
+        const d = buf.getChannelData(ch)
+        for (let i = 0; i < len; i++) {
+          const t = i / sr
+          d[i] = (Math.random() * 2 - 1) * Math.exp(-t * 3.0) * (1 + 0.6 * Math.exp(-t * 18))
         }
       }
       this.convolver = ctx.createConvolver()
-      this.convolver.buffer = impulse
+      this.convolver.buffer = buf
     }
     return this.convolver
   }
 
   play(name: SoundName): void {
     const now = performance.now()
-    const lastPlayed = this.cooldowns.get(name) ?? 0
-    if (now - lastPlayed < this.cooldownMs) return
+    const last = this.cooldowns.get(name) ?? 0
+    if (now - last < this.cooldownMs) return
     this.cooldowns.set(name, now)
 
     try {
       const ctx = this.getContext()
-      if (ctx.state === 'suspended') {
-        ctx.resume()
-      }
+      if (ctx.state === 'suspended') ctx.resume()
 
       switch (name) {
-        case 'blue': this.playBlue(ctx); break
-        case 'red': this.playRed(ctx); break
+        case 'blue':   this.playBlue(ctx); break
+        case 'red':    this.playRed(ctx); break
         case 'purple': this.playPurple(ctx); break
-        case 'shoot': this.playShoot(ctx); break
+        case 'shoot':  this.playShoot(ctx); break
+        case 'domain': this.playDomain(ctx); break
       }
-    } catch {
-      // Audio not available
-    }
+    } catch { /* audio not available */ }
   }
 
+  // ── BLUE: Gravitational void opening ──
   private playBlue(ctx: AudioContext): void {
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.setValueAtTime(0, now)
-    master.gain.linearRampToValueAtTime(0.25, now + 0.08)
-    master.gain.setValueAtTime(0.25, now + 0.6)
-    master.gain.exponentialRampToValueAtTime(0.001, now + 1.6)
+    const t = ctx.currentTime
+    const master = this.chain(ctx, 0.25, t, 1.6)
 
-    const reverb = this.getReverb(ctx)
-    const dry = ctx.createGain()
-    dry.gain.value = 0.7
-    const wet = ctx.createGain()
-    wet.gain.value = 0.4
-    master.connect(dry).connect(ctx.destination)
-    master.connect(reverb).connect(wet).connect(ctx.destination)
+    // Deep sub pull — descending sine
+    this.osc(ctx, master, 'sine', t, 1.5,
+      [[110, t], [50, t + 0.8], [35, t + 1.4]],
+      [[0.4, t], [0.5, t + 0.3], [0.01, t + 1.5]])
 
-    // Deep gravitational pull - descending sub bass
-    const sub = ctx.createOscillator()
-    const subGain = ctx.createGain()
-    sub.type = 'sine'
-    sub.frequency.setValueAtTime(120, now)
-    sub.frequency.exponentialRampToValueAtTime(55, now + 0.8)
-    sub.frequency.setValueAtTime(55, now + 0.8)
-    sub.frequency.exponentialRampToValueAtTime(40, now + 1.5)
-    subGain.gain.setValueAtTime(0.4, now)
-    subGain.gain.linearRampToValueAtTime(0.5, now + 0.3)
-    subGain.gain.exponentialRampToValueAtTime(0.01, now + 1.5)
-    sub.connect(subGain).connect(master)
-    sub.start(now)
-    sub.stop(now + 1.5)
-
-    // Eerie tonal sweep - the "void opening" sound
-    const sweep = ctx.createOscillator()
-    const sweepGain = ctx.createGain()
+    // Eerie cold sweep — triangle through bandpass
     const sweepFilter = ctx.createBiquadFilter()
-    sweep.type = 'triangle'
-    sweep.frequency.setValueAtTime(800, now)
-    sweep.frequency.exponentialRampToValueAtTime(200, now + 0.5)
-    sweep.frequency.exponentialRampToValueAtTime(150, now + 1.2)
     sweepFilter.type = 'bandpass'
-    sweepFilter.frequency.setValueAtTime(600, now)
-    sweepFilter.frequency.exponentialRampToValueAtTime(200, now + 1.0)
-    sweepFilter.Q.value = 3
-    sweepGain.gain.setValueAtTime(0, now)
-    sweepGain.gain.linearRampToValueAtTime(0.15, now + 0.1)
-    sweepGain.gain.exponentialRampToValueAtTime(0.01, now + 1.2)
-    sweep.connect(sweepFilter).connect(sweepGain).connect(master)
-    sweep.start(now)
-    sweep.stop(now + 1.2)
+    sweepFilter.frequency.setValueAtTime(600, t)
+    sweepFilter.frequency.exponentialRampToValueAtTime(180, t + 1.0)
+    sweepFilter.Q.value = 4
+    this.oscThrough(ctx, master, 'triangle', t, 1.2,
+      [[800, t], [180, t + 0.5], [130, t + 1.1]],
+      [[0, t], [0.14, t + 0.1], [0.01, t + 1.2]],
+      sweepFilter)
 
-    // Harmonic shimmer - cold ethereal tone
-    const shimmer = ctx.createOscillator()
-    const shimmerGain = ctx.createGain()
-    shimmer.type = 'sine'
-    shimmer.frequency.setValueAtTime(440, now)
-    shimmer.frequency.exponentialRampToValueAtTime(660, now + 0.3)
-    shimmer.frequency.exponentialRampToValueAtTime(330, now + 1.0)
-    shimmerGain.gain.setValueAtTime(0, now)
-    shimmerGain.gain.linearRampToValueAtTime(0.06, now + 0.15)
-    shimmerGain.gain.exponentialRampToValueAtTime(0.01, now + 1.0)
-    shimmer.connect(shimmerGain).connect(master)
-    shimmer.start(now)
-    shimmer.stop(now + 1.0)
+    // Harmonic shimmer
+    this.osc(ctx, master, 'sine', t, 1.0,
+      [[440, t], [660, t + 0.3], [300, t + 0.9]],
+      [[0, t], [0.06, t + 0.15], [0.01, t + 1.0]])
 
-    // Sucking whoosh - filtered noise
-    const whoosh = this.createFilteredNoise(ctx, now, 1.2, {
-      type: 'highpass',
-      frequency: 300,
-      frequencyEnd: 80,
-      Q: 1,
-      volume: 0.12,
-    })
-    whoosh.connect(master)
+    // Vacuum whoosh — highpass noise
+    this.noise(ctx, master, t, 1.2, 'highpass', 300, 1, 0.10,
+      [[300, t], [70, t + 1.0]])
 
-    // Implosion thud
-    const thud = this.createFilteredNoise(ctx, now + 0.02, 0.15, {
-      type: 'lowpass',
-      frequency: 200,
-      Q: 2,
-      volume: 0.3,
-    })
-    thud.connect(master)
+    // Implosion thud — lowpass noise
+    this.noise(ctx, master, t + 0.02, 0.15, 'lowpass', 200, 2, 0.28)
   }
 
+  // ── RED: Explosive reversal ──
   private playRed(ctx: AudioContext): void {
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.setValueAtTime(0, now)
-    master.gain.linearRampToValueAtTime(0.3, now + 0.03)
-    master.gain.setValueAtTime(0.3, now + 0.5)
-    master.gain.exponentialRampToValueAtTime(0.001, now + 1.4)
+    const t = ctx.currentTime
+    const master = this.chain(ctx, 0.30, t, 1.4)
 
-    const reverb = this.getReverb(ctx)
-    const dry = ctx.createGain()
-    dry.gain.value = 0.75
-    const wet = ctx.createGain()
-    wet.gain.value = 0.35
-    master.connect(dry).connect(ctx.destination)
-    master.connect(reverb).connect(wet).connect(ctx.destination)
+    // Impact hit — distorted sawtooth
+    const dist = ctx.createWaveShaper()
+    dist.curve = this.distCurve(200)
+    dist.oversample = '4x'
+    const lpf = ctx.createBiquadFilter()
+    lpf.type = 'lowpass'
+    lpf.frequency.value = 400
+    this.oscThrough(ctx, master, 'sawtooth', t, 0.25,
+      [[200, t], [55, t + 0.15]],
+      [[0.5, t], [0.01, t + 0.25]],
+      dist, lpf)
 
-    // Aggressive explosion hit
-    const impact = ctx.createOscillator()
-    const impactGain = ctx.createGain()
-    impact.type = 'sawtooth'
-    impact.frequency.setValueAtTime(200, now)
-    impact.frequency.exponentialRampToValueAtTime(60, now + 0.15)
-    impactGain.gain.setValueAtTime(0.5, now)
-    impactGain.gain.exponentialRampToValueAtTime(0.01, now + 0.25)
-    const distortion = ctx.createWaveShaper()
-    // @ts-expect-error Float32Array buffer type mismatch
-    distortion.curve = this.makeDistortionCurve(200)
-    distortion.oversample = '4x'
-    const impactFilter = ctx.createBiquadFilter()
-    impactFilter.type = 'lowpass'
-    impactFilter.frequency.value = 400
-    impact.connect(distortion).connect(impactFilter).connect(impactGain).connect(master)
-    impact.start(now)
-    impact.stop(now + 0.25)
+    // Growling reversal tone
+    const growlF = ctx.createBiquadFilter()
+    growlF.type = 'lowpass'
+    growlF.frequency.setValueAtTime(300, t)
+    growlF.frequency.linearRampToValueAtTime(800, t + 0.15)
+    growlF.frequency.exponentialRampToValueAtTime(180, t + 1.0)
+    growlF.Q.value = 5
+    this.oscThrough(ctx, master, 'sawtooth', t, 1.2,
+      [[75, t], [150, t + 0.2], [85, t + 0.8]],
+      [[0, t], [0.20, t + 0.05], [0.01, t + 1.2]],
+      growlF)
 
-    // Growling sustained tone - the reversal energy
-    const growl = ctx.createOscillator()
-    const growlGain = ctx.createGain()
-    const growlFilter = ctx.createBiquadFilter()
-    growl.type = 'sawtooth'
-    growl.frequency.setValueAtTime(80, now)
-    growl.frequency.exponentialRampToValueAtTime(150, now + 0.2)
-    growl.frequency.exponentialRampToValueAtTime(90, now + 0.8)
-    growlFilter.type = 'lowpass'
-    growlFilter.frequency.setValueAtTime(300, now)
-    growlFilter.frequency.linearRampToValueAtTime(800, now + 0.15)
-    growlFilter.frequency.exponentialRampToValueAtTime(200, now + 1.0)
-    growlFilter.Q.value = 4
-    growlGain.gain.setValueAtTime(0, now)
-    growlGain.gain.linearRampToValueAtTime(0.2, now + 0.05)
-    growlGain.gain.exponentialRampToValueAtTime(0.01, now + 1.2)
-    growl.connect(growlFilter).connect(growlGain).connect(master)
-    growl.start(now)
-    growl.stop(now + 1.2)
+    // Crackle — sparse impulse noise
+    this.crackle(ctx, master, t, 0.8, 0.14)
 
-    // Crackling fire noise
-    const crackle = this.createCrackleNoise(ctx, now, 0.8, 0.15)
-    crackle.connect(master)
-
-    // Explosion burst noise
-    const burst = this.createFilteredNoise(ctx, now, 0.3, {
-      type: 'bandpass',
-      frequency: 2000,
-      frequencyEnd: 400,
-      Q: 0.5,
-      volume: 0.2,
-    })
-    burst.connect(master)
+    // Burst — bandpass noise
+    this.noise(ctx, master, t, 0.3, 'bandpass', 2000, 0.5, 0.18,
+      [[2000, t], [350, t + 0.3]])
 
     // Low boom
-    const boom = this.createFilteredNoise(ctx, now, 0.2, {
-      type: 'lowpass',
-      frequency: 150,
-      Q: 3,
-      volume: 0.35,
-    })
-    boom.connect(master)
+    this.noise(ctx, master, t, 0.2, 'lowpass', 140, 3, 0.32)
   }
 
+  // ── PURPLE: Electromagnetic storm (the real JJK sound) ──
   private playPurple(ctx: AudioContext): void {
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.setValueAtTime(0, now)
-    master.gain.linearRampToValueAtTime(0.3, now + 0.15)
-    master.gain.setValueAtTime(0.3, now + 1.0)
-    master.gain.exponentialRampToValueAtTime(0.001, now + 2.5)
+    const t = ctx.currentTime
+    const master = this.chain(ctx, 0.30, t, 3.0, 0.5)
 
-    const reverb = this.getReverb(ctx)
-    const dry = ctx.createGain()
-    dry.gain.value = 0.6
-    const wet = ctx.createGain()
-    wet.gain.value = 0.5
-    master.connect(dry).connect(ctx.destination)
-    master.connect(reverb).connect(wet).connect(ctx.destination)
+    // Massive sub-bass — the chest-rumbling foundation
+    this.osc(ctx, master, 'sine', t, 2.5,
+      [[30, t], [45, t + 0.5], [25, t + 2.0]],
+      [[0, t], [0.55, t + 0.3], [0.01, t + 2.4]])
 
-    // Deep reality-tearing sub bass
-    const sub = ctx.createOscillator()
-    const subGain = ctx.createGain()
-    sub.type = 'sine'
-    sub.frequency.setValueAtTime(35, now)
-    sub.frequency.linearRampToValueAtTime(50, now + 0.5)
-    sub.frequency.linearRampToValueAtTime(30, now + 2.0)
-    subGain.gain.setValueAtTime(0, now)
-    subGain.gain.linearRampToValueAtTime(0.5, now + 0.3)
-    subGain.gain.exponentialRampToValueAtTime(0.01, now + 2.2)
-    sub.connect(subGain).connect(master)
-    sub.start(now)
-    sub.stop(now + 2.2)
-
-    // Detuned drones - two oscillators slightly detuned for beating
-    for (const detune of [-8, 8]) {
-      const drone = ctx.createOscillator()
-      const droneGain = ctx.createGain()
-      drone.type = 'sine'
-      drone.frequency.setValueAtTime(110, now)
-      drone.frequency.exponentialRampToValueAtTime(85, now + 1.5)
-      drone.detune.value = detune
-      droneGain.gain.setValueAtTime(0, now)
-      droneGain.gain.linearRampToValueAtTime(0.12, now + 0.2)
-      droneGain.gain.exponentialRampToValueAtTime(0.01, now + 2.0)
-      drone.connect(droneGain).connect(master)
-      drone.start(now)
-      drone.stop(now + 2.0)
+    // Detuned drones — beating interference pattern (electromagnetic hum)
+    for (const detune of [-12, 12]) {
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.type = 'sine'
+      o.frequency.setValueAtTime(100, t)
+      o.frequency.exponentialRampToValueAtTime(75, t + 1.8)
+      o.detune.value = detune
+      g.gain.setValueAtTime(0, t)
+      g.gain.linearRampToValueAtTime(0.14, t + 0.2)
+      g.gain.exponentialRampToValueAtTime(0.01, t + 2.2)
+      o.connect(g).connect(master)
+      o.start(t); o.stop(t + 2.2)
     }
 
-    // High eerie whistle - space warping
-    const whistle = ctx.createOscillator()
-    const whistleGain = ctx.createGain()
-    const whistleFilter = ctx.createBiquadFilter()
-    whistle.type = 'sine'
-    whistle.frequency.setValueAtTime(1200, now)
-    whistle.frequency.exponentialRampToValueAtTime(800, now + 0.5)
-    whistle.frequency.exponentialRampToValueAtTime(2000, now + 1.2)
-    whistle.frequency.exponentialRampToValueAtTime(600, now + 2.0)
-    whistleFilter.type = 'bandpass'
-    whistleFilter.frequency.setValueAtTime(1500, now)
-    whistleFilter.Q.value = 5
-    whistleGain.gain.setValueAtTime(0, now)
-    whistleGain.gain.linearRampToValueAtTime(0.05, now + 0.3)
-    whistleGain.gain.exponentialRampToValueAtTime(0.01, now + 2.0)
-    whistle.connect(whistleFilter).connect(whistleGain).connect(master)
-    whistle.start(now)
-    whistle.stop(now + 2.0)
+    // Crackling electricity — the signature purple sound
+    // Multiple crackle layers at different densities
+    this.crackle(ctx, master, t, 2.0, 0.18, 0.04, 1800) // dense high crackle
+    this.crackle(ctx, master, t + 0.1, 1.8, 0.12, 0.02, 3000) // sparse bright sparks
 
-    // Metallic shimmer - FM synthesis
+    // Electrical zap arcs — rapid bandpass noise bursts
+    for (let i = 0; i < 4; i++) {
+      const delay = 0.1 + Math.random() * 1.0
+      this.noise(ctx, master, t + delay, 0.08 + Math.random() * 0.06,
+        'bandpass', 2500 + Math.random() * 2000, 3, 0.10 + Math.random() * 0.08)
+    }
+
+    // Metallic resonance — FM synthesis shimmer
     const carrier = ctx.createOscillator()
-    const modulator = ctx.createOscillator()
-    const modGain = ctx.createGain()
-    const carrierGain = ctx.createGain()
-    modulator.frequency.setValueAtTime(440, now)
-    modulator.frequency.exponentialRampToValueAtTime(220, now + 1.5)
-    modGain.gain.setValueAtTime(300, now)
-    modGain.gain.exponentialRampToValueAtTime(50, now + 1.5)
-    carrier.frequency.setValueAtTime(330, now)
-    carrier.frequency.exponentialRampToValueAtTime(165, now + 1.5)
-    carrierGain.gain.setValueAtTime(0, now)
-    carrierGain.gain.linearRampToValueAtTime(0.06, now + 0.2)
-    carrierGain.gain.exponentialRampToValueAtTime(0.01, now + 1.8)
-    modulator.connect(modGain).connect(carrier.frequency)
-    carrier.connect(carrierGain).connect(master)
-    modulator.start(now)
-    carrier.start(now)
-    modulator.stop(now + 1.8)
-    carrier.stop(now + 1.8)
+    const mod = ctx.createOscillator()
+    const modG = ctx.createGain()
+    const carG = ctx.createGain()
+    mod.frequency.setValueAtTime(380, t)
+    mod.frequency.exponentialRampToValueAtTime(200, t + 1.8)
+    modG.gain.setValueAtTime(350, t)
+    modG.gain.exponentialRampToValueAtTime(40, t + 1.8)
+    carrier.frequency.setValueAtTime(280, t)
+    carrier.frequency.exponentialRampToValueAtTime(140, t + 1.8)
+    carG.gain.setValueAtTime(0, t)
+    carG.gain.linearRampToValueAtTime(0.07, t + 0.2)
+    carG.gain.exponentialRampToValueAtTime(0.01, t + 2.0)
+    mod.connect(modG).connect(carrier.frequency)
+    carrier.connect(carG).connect(master)
+    mod.start(t); carrier.start(t)
+    mod.stop(t + 2.0); carrier.stop(t + 2.0)
 
-    // Reality crack noise - sharp filtered burst
-    const crack = this.createFilteredNoise(ctx, now + 0.05, 0.4, {
-      type: 'bandpass',
-      frequency: 3000,
-      frequencyEnd: 500,
-      Q: 2,
-      volume: 0.12,
-    })
-    crack.connect(master)
+    // High whistle — space warping / eerie tone
+    const whistleF = ctx.createBiquadFilter()
+    whistleF.type = 'bandpass'
+    whistleF.frequency.setValueAtTime(1400, t)
+    whistleF.Q.value = 6
+    this.oscThrough(ctx, master, 'sine', t, 2.2,
+      [[1100, t], [750, t + 0.5], [1800, t + 1.2], [550, t + 2.0]],
+      [[0, t], [0.04, t + 0.3], [0.01, t + 2.0]],
+      whistleF)
 
-    // Sustained rumble
-    const rumble = this.createFilteredNoise(ctx, now, 2.0, {
-      type: 'lowpass',
-      frequency: 120,
-      Q: 1,
-      volume: 0.2,
-    })
-    rumble.connect(master)
+    // Reality-tearing rumble — sustained lowpass noise
+    this.noise(ctx, master, t, 2.5, 'lowpass', 100, 1.5, 0.22)
+
+    // Thunderclap crack at onset
+    this.noise(ctx, master, t + 0.05, 0.12, 'bandpass', 3500, 2, 0.15)
   }
 
+  // ── SHOOT: Projectile launch ──
   private playShoot(ctx: AudioContext): void {
-    const now = ctx.currentTime
-    const master = ctx.createGain()
-    master.gain.setValueAtTime(0.35, now)
-    master.gain.exponentialRampToValueAtTime(0.001, now + 1.0)
+    const t = ctx.currentTime
+    const master = this.chain(ctx, 0.35, t, 1.0)
 
-    const reverb = this.getReverb(ctx)
-    const dry = ctx.createGain()
-    dry.gain.value = 0.8
-    const wet = ctx.createGain()
-    wet.gain.value = 0.3
-    master.connect(dry).connect(ctx.destination)
-    master.connect(reverb).connect(wet).connect(ctx.destination)
-
-    // Fast descending sweep - the projectile whoosh
-    const sweep = ctx.createOscillator()
-    const sweepGain = ctx.createGain()
-    sweep.type = 'sawtooth'
-    sweep.frequency.setValueAtTime(1200, now)
-    sweep.frequency.exponentialRampToValueAtTime(80, now + 0.4)
-    sweepGain.gain.setValueAtTime(0.2, now)
-    sweepGain.gain.exponentialRampToValueAtTime(0.01, now + 0.5)
-    const sweepFilter = ctx.createBiquadFilter()
-    sweepFilter.type = 'lowpass'
-    sweepFilter.frequency.setValueAtTime(3000, now)
-    sweepFilter.frequency.exponentialRampToValueAtTime(200, now + 0.4)
-    sweep.connect(sweepFilter).connect(sweepGain).connect(master)
-    sweep.start(now)
-    sweep.stop(now + 0.5)
+    // Fast descending sweep
+    const sweepF = ctx.createBiquadFilter()
+    sweepF.type = 'lowpass'
+    sweepF.frequency.setValueAtTime(3000, t)
+    sweepF.frequency.exponentialRampToValueAtTime(180, t + 0.4)
+    this.oscThrough(ctx, master, 'sawtooth', t, 0.5,
+      [[1200, t], [70, t + 0.4]],
+      [[0.2, t], [0.01, t + 0.5]],
+      sweepF)
 
     // Punch impact
-    const punch = ctx.createOscillator()
-    const punchGain = ctx.createGain()
-    punch.type = 'sine'
-    punch.frequency.setValueAtTime(150, now)
-    punch.frequency.exponentialRampToValueAtTime(30, now + 0.12)
-    punchGain.gain.setValueAtTime(0.4, now)
-    punchGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15)
-    punch.connect(punchGain).connect(master)
-    punch.start(now)
-    punch.stop(now + 0.15)
+    this.osc(ctx, master, 'sine', t, 0.15,
+      [[150, t], [28, t + 0.12]],
+      [[0.4, t], [0.01, t + 0.15]])
 
-    // Air displacement noise
-    const air = this.createFilteredNoise(ctx, now, 0.35, {
-      type: 'highpass',
-      frequency: 800,
-      frequencyEnd: 200,
-      Q: 0.5,
-      volume: 0.25,
-    })
-    air.connect(master)
+    // Air displacement
+    this.noise(ctx, master, t, 0.35, 'highpass', 800, 0.5, 0.22,
+      [[800, t], [180, t + 0.3]])
 
     // Low thump
-    const thump = this.createFilteredNoise(ctx, now, 0.1, {
-      type: 'lowpass',
-      frequency: 100,
-      Q: 4,
-      volume: 0.35,
-    })
-    thump.connect(master)
+    this.noise(ctx, master, t, 0.1, 'lowpass', 100, 4, 0.32)
   }
 
-  private createFilteredNoise(
-    ctx: AudioContext,
-    startTime: number,
-    duration: number,
-    opts: {
-      type: BiquadFilterType
-      frequency: number
-      frequencyEnd?: number
-      Q: number
-      volume: number
-    },
-  ): GainNode {
-    const bufferSize = Math.floor(ctx.sampleRate * duration)
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < bufferSize; i++) {
-      const t = i / bufferSize
-      // Shaped noise with exponential decay
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 4)
-    }
+  // ── DOMAIN: Infinite Void activation ──
+  private playDomain(ctx: AudioContext): void {
+    const t = ctx.currentTime
+    const master = this.chain(ctx, 0.30, t, 4.0, 0.6)
 
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
+    // Ultra-deep sub — reality cracking open
+    this.osc(ctx, master, 'sine', t, 3.5,
+      [[20, t], [35, t + 1.0], [18, t + 3.0]],
+      [[0, t], [0.6, t + 0.5], [0.01, t + 3.5]])
 
-    const filter = ctx.createBiquadFilter()
-    filter.type = opts.type
-    filter.frequency.setValueAtTime(opts.frequency, startTime)
-    if (opts.frequencyEnd) {
-      filter.frequency.exponentialRampToValueAtTime(opts.frequencyEnd, startTime + duration)
-    }
-    filter.Q.setValueAtTime(opts.Q, startTime)
+    // Reverse reverb swell — ascending filtered noise
+    this.noise(ctx, master, t, 3.0, 'bandpass', 200, 2, 0.15,
+      [[200, t], [1500, t + 1.5], [400, t + 3.0]])
 
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(opts.volume, startTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration)
-
-    source.connect(filter).connect(gain)
-    source.start(startTime)
-    source.stop(startTime + duration)
-
-    return gain
-  }
-
-  private createCrackleNoise(
-    ctx: AudioContext,
-    startTime: number,
-    duration: number,
-    volume: number,
-  ): GainNode {
-    // Crackle = sparse random impulses
-    const bufferSize = Math.floor(ctx.sampleRate * duration)
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < bufferSize; i++) {
-      // Sparse impulses with exponential decay
-      const t = i / bufferSize
-      if (Math.random() < 0.02) {
-        data[i] = (Math.random() * 2 - 1) * Math.exp(-t * 2)
-      } else {
-        data[i] = 0
+    // Detuned choir-like drones
+    for (const freq of [55, 82.5, 110]) {
+      for (const det of [-6, 6]) {
+        const o = ctx.createOscillator()
+        const g = ctx.createGain()
+        o.type = 'sine'
+        o.frequency.value = freq
+        o.detune.value = det
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(0.06, t + 1.0)
+        g.gain.exponentialRampToValueAtTime(0.01, t + 3.5)
+        o.connect(g).connect(master)
+        o.start(t); o.stop(t + 3.5)
       }
     }
 
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
+    // Metallic ring — like a gong
+    const gongF = ctx.createBiquadFilter()
+    gongF.type = 'bandpass'
+    gongF.frequency.value = 800
+    gongF.Q.value = 12
+    this.oscThrough(ctx, master, 'triangle', t + 0.5, 2.5,
+      [[800, t + 0.5], [600, t + 2.0]],
+      [[0, t + 0.5], [0.08, t + 0.6], [0.01, t + 3.0]],
+      gongF)
 
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'highpass'
-    filter.frequency.value = 2000
-    filter.Q.value = 1
+    // Sustained wind/void rumble
+    this.noise(ctx, master, t, 3.5, 'lowpass', 80, 1, 0.20)
 
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(volume, startTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration)
-
-    source.connect(filter).connect(gain)
-    source.start(startTime)
-    source.stop(startTime + duration)
-
-    return gain
+    // Sharp crack at start
+    this.noise(ctx, master, t, 0.08, 'highpass', 4000, 1, 0.20)
   }
 
-  private makeDistortionCurve(amount: number): Float32Array {
-    const samples = 44100
-    const curve = new Float32Array(samples)
-    const deg = Math.PI / 180
-    for (let i = 0; i < samples; i++) {
-      const x = (i * 2) / samples - 1
-      curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x))
+  // ── Helpers ──
+
+  /** Create master gain → reverb chain, returns the master gain node. */
+  private chain(ctx: AudioContext, vol: number, t: number, dur: number, wetMix = 0.4): GainNode {
+    const master = ctx.createGain()
+    master.gain.setValueAtTime(0, t)
+    master.gain.linearRampToValueAtTime(vol, t + Math.min(dur * 0.1, 0.15))
+    master.gain.setValueAtTime(vol, t + dur * 0.4)
+    master.gain.exponentialRampToValueAtTime(0.001, t + dur)
+
+    const dry = ctx.createGain()
+    dry.gain.value = 1 - wetMix * 0.3
+    const wet = ctx.createGain()
+    wet.gain.value = wetMix
+    master.connect(dry).connect(ctx.destination)
+    master.connect(this.getReverb(ctx)).connect(wet).connect(ctx.destination)
+    return master
+  }
+
+  /** Simple oscillator with frequency + gain envelopes. */
+  private osc(
+    ctx: AudioContext, dest: AudioNode, type: OscillatorType,
+    start: number, dur: number,
+    freqs: [number, number][],
+    gains: [number, number][],
+  ): void {
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.type = type
+    for (const [val, time] of freqs) {
+      if (time === freqs[0][1]) o.frequency.setValueAtTime(val, time)
+      else o.frequency.exponentialRampToValueAtTime(Math.max(val, 0.01), time)
     }
-    return curve
+    for (const [val, time] of gains) {
+      if (val < 0.002) g.gain.exponentialRampToValueAtTime(0.001, time)
+      else if (time === gains[0][1]) g.gain.setValueAtTime(val, time)
+      else g.gain.linearRampToValueAtTime(val, time)
+    }
+    o.connect(g).connect(dest)
+    o.start(start); o.stop(start + dur)
+  }
+
+  /** Oscillator routed through filter chain. */
+  private oscThrough(
+    ctx: AudioContext, dest: AudioNode, type: OscillatorType,
+    start: number, dur: number,
+    freqs: [number, number][],
+    gains: [number, number][],
+    ...filters: AudioNode[]
+  ): void {
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.type = type
+    for (const [val, time] of freqs) {
+      if (time === freqs[0][1]) o.frequency.setValueAtTime(val, time)
+      else o.frequency.exponentialRampToValueAtTime(Math.max(val, 0.01), time)
+    }
+    for (const [val, time] of gains) {
+      if (val < 0.002) g.gain.exponentialRampToValueAtTime(0.001, time)
+      else if (time === gains[0][1]) g.gain.setValueAtTime(val, time)
+      else g.gain.linearRampToValueAtTime(val, time)
+    }
+    let node: AudioNode = o
+    for (const f of filters) { node = node.connect(f) }
+    node.connect(g).connect(dest)
+    o.start(start); o.stop(start + dur)
+  }
+
+  /** Filtered noise burst. */
+  private noise(
+    ctx: AudioContext, dest: AudioNode,
+    start: number, dur: number,
+    type: BiquadFilterType, freq: number, Q: number, vol: number,
+    freqEnv?: [number, number][],
+  ): void {
+    const len = Math.floor(ctx.sampleRate * dur)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.exp(-(i / len) * 4)
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const f = ctx.createBiquadFilter()
+    f.type = type
+    f.frequency.setValueAtTime(freq, start)
+    f.Q.setValueAtTime(Q, start)
+    if (freqEnv) {
+      for (const [val, time] of freqEnv) {
+        if (time === freqEnv[0][1]) f.frequency.setValueAtTime(val, time)
+        else f.frequency.exponentialRampToValueAtTime(Math.max(val, 1), time)
+      }
+    }
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(vol, start)
+    g.gain.exponentialRampToValueAtTime(0.001, start + dur)
+    src.connect(f).connect(g).connect(dest)
+    src.start(start); src.stop(start + dur)
+  }
+
+  /** Crackle: sparse random impulses through highpass. */
+  private crackle(
+    ctx: AudioContext, dest: AudioNode,
+    start: number, dur: number, vol: number,
+    density = 0.02, hpFreq = 2000,
+  ): void {
+    const len = Math.floor(ctx.sampleRate * dur)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) {
+      const t = i / len
+      d[i] = Math.random() < density
+        ? (Math.random() * 2 - 1) * Math.exp(-t * 2)
+        : 0
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const f = ctx.createBiquadFilter()
+    f.type = 'highpass'
+    f.frequency.value = hpFreq
+    f.Q.value = 1
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(vol, start)
+    g.gain.exponentialRampToValueAtTime(0.001, start + dur)
+    src.connect(f).connect(g).connect(dest)
+    src.start(start); src.stop(start + dur)
+  }
+
+  private distCurve(amount: number): Float32Array {
+    const n = 44100
+    const c = new Float32Array(n)
+    const deg = Math.PI / 180
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1
+      c[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x))
+    }
+    return c
   }
 }
