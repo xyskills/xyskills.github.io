@@ -48,6 +48,6 @@ export abstract class Ability {
       this.position.add(this.shootDirection.clone().multiplyScalar(deltaTime))
       this.getEffect().setPosition(this.position)
     }
-    this.getEffect().update(deltaTime)
+    // NOTE: effect.update() is called by SceneManager.render() — do NOT call it here too
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { EffectRenderer } from './EffectRenderer'
+import { EffectRenderer, EffectPhase } from './EffectRenderer'
 import { StreamLines } from '../StreamLines'
 
 // Thick ribbon bolt — real quad geometry, not 1px lines
@@ -122,10 +122,11 @@ export class HollowPurpleEffect extends EffectRenderer {
   private outerGlow: THREE.Sprite
 
   private time = 0
-  private targetOpacity = 1
-  private currentOpacity = 0
   private flickReady = false
   private flashIntensity = 0
+
+  protected override spawnDur     = 0.70  // slow energy build-up
+  protected override dissipateDur = 0.50  // dramatic chaos + fade
 
   constructor() {
     super()
@@ -222,34 +223,59 @@ export class HollowPurpleEffect extends EffectRenderer {
 
   setFlickReady(ready: boolean): void { this.flickReady = ready }
 
-  spawn(): void {
-    this.targetOpacity = 1
-    this.currentOpacity = 0
+  override spawn(): void {
+    super.spawn()
+    this.time = 0
     this.flickReady = false
     this.flashIntensity = 0
   }
 
-  update(dt: number): void {
-    this.time += dt
-    this.currentOpacity += (this.targetOpacity - this.currentOpacity) * Math.min(dt * 4, 1)
-    const op = this.currentOpacity
+  override beginDissipate(): void {
+    super.beginDissipate()
+    this.darkenBackground = false  // stop darkness/flicker the moment it's shot
+    this.flashIntensity   = 0
+  }
 
-    this.flashIntensity = Math.max(0, this.flashIntensity - dt * 5)
+  update(dt: number): void {
+    this.tickPhase(dt)
+    this.time += dt
+
+    const sT = this.spawnT
+    const dT = this.dissipateT
+
+    this.flashIntensity = Math.max(0, this.flashIntensity - dt * 4)
 
     const charged = this.flickReady
 
+    // ── Scale envelope ──
+    // Spawn: easeOutBack overshoot — coalesces with slight overreach then settles
+    // Dissipate: expands outward as the energy disperses
+    const spawnScale     = EffectRenderer.easeOutBack(sT, 1.2)
+    const dissipateScale = 1 + 0.6 * EffectRenderer.easeIn(dT, 0.8)
+    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale))
+
+    // ── Opacity envelope ──
+    const appear    = EffectRenderer.easeOut(sT, 0.6)
+    const disappear = 1 - EffectRenderer.easeIn(dT, 0.9)
+    const op        = appear * disappear
+
+    // During spawn: slightly boosted activity as energy builds
+    const spawnBoltMul    = this.phase === EffectPhase.SPAWNING ? 1.0 + (1 - sT) * 0.8 : 1.0
+    // During dissipate: no new bolts fire — just fade out gracefully
+    const dissipateBoltMul = this.phase === EffectPhase.DISSIPATING ? 0 : 1.0
+    const activityMul = spawnBoltMul * dissipateBoltMul
+
     // --- Thick bolts ---
-    // White/purple wide bolts (indices 0-3)
     for (let i = 0; i < 4; i++) {
       const b = this.thickBolts[i]
       if (b.fireTimer > 0) {
         b.fireTimer -= dt
         b.regenerate(charged ? 0.16 : 0.10, 0.018 + Math.random() * 0.008)
-        b.setOpacity(op * (0.65 + Math.random() * 0.35) * (charged ? 1.3 : 1.0))
+        b.setOpacity(op * 0.85 * (charged ? 1.3 : 1.0))
       } else {
         b.setOpacity(0)
         b.cooldown -= dt
-        const chance = charged ? 0.18 : 0.08
+        const chance = (charged ? 0.18 : 0.08) * activityMul
         if (b.cooldown <= 0 && Math.random() < chance) {
           b.angle    = Math.random() * Math.PI
           b.length   = 4.0 + Math.random() * 2.5
@@ -260,17 +286,16 @@ export class HollowPurpleEffect extends EffectRenderer {
       }
     }
 
-    // Deep-violet thick bolts (indices 4-6)
     for (let i = 4; i < 7; i++) {
       const b = this.thickBolts[i]
       if (b.fireTimer > 0) {
         b.fireTimer -= dt
         b.regenerate(charged ? 0.30 : 0.20, 0.014 + Math.random() * 0.006)
-        b.setOpacity(op * (0.55 + Math.random() * 0.35) * (charged ? 1.2 : 1.0))
+        b.setOpacity(op * 0.75 * (charged ? 1.2 : 1.0))
       } else {
         b.setOpacity(0)
         b.cooldown -= dt
-        const chance = charged ? 0.10 : 0.04
+        const chance = (charged ? 0.10 : 0.04) * activityMul
         if (b.cooldown <= 0 && Math.random() < chance) {
           b.angle    = Math.random() * Math.PI * 2
           b.length   = charged ? 6.0 + Math.random() * 2.0 : 5.0 + Math.random() * 2.0
@@ -282,15 +307,14 @@ export class HollowPurpleEffect extends EffectRenderer {
       }
     }
 
-    // --- Thin shimmer bolts (first 8) ---
-    const brightFire     = charged ? 0.16 : 0.07
+    const brightFire     = (charged ? 0.16 : 0.07) * activityMul
     const brightDuration = charged ? 0.16 : 0.10
     for (let i = 0; i < 8; i++) {
       const b = this.thinBolts[i]
       if (b.fireTimer > 0) {
         b.fireTimer -= dt
         b.regenerate(charged ? 0.12 : 0.08)
-        b.setOpacity(op * (0.6 + Math.random() * 0.4) * (charged ? 1.3 : 1.0))
+        b.setOpacity(op * 0.80 * (charged ? 1.3 : 1.0))
       } else {
         b.setOpacity(0)
         b.cooldown -= dt
@@ -304,14 +328,13 @@ export class HollowPurpleEffect extends EffectRenderer {
       }
     }
 
-    // --- Thin deep-purple arcs (last 12) ---
-    const deepFire = charged ? 0.10 : 0.04
+    const deepFire = (charged ? 0.10 : 0.04) * activityMul
     for (let i = 8; i < this.thinBolts.length; i++) {
       const b = this.thinBolts[i]
       if (b.fireTimer > 0) {
         b.fireTimer -= dt
         b.regenerate(charged ? 0.28 : 0.18)
-        b.setOpacity(op * Math.min((0.65 + Math.random() * 0.35) * (charged ? 1.25 : 1.0), 1.0))
+        b.setOpacity(op * Math.min(0.80 * (charged ? 1.25 : 1.0), 1.0))
       } else {
         b.setOpacity(0)
         b.cooldown -= dt
@@ -328,8 +351,8 @@ export class HollowPurpleEffect extends EffectRenderer {
     this.fieldLines.setOpacity(op * (charged ? 0.72 : 0.50))
     this.fieldLines.update(dt)
 
-    const whitePulse  = 0.55 + 0.30 * Math.sin(this.time * 6.5) + this.flashIntensity * 0.5
-    const chargedMul  = charged ? 1.4 : 1.0
+    const whitePulse = 0.55 + 0.30 * Math.sin(this.time * 6.5) + this.flashIntensity * 0.5
+    const chargedMul = charged ? 1.4 : 1.0
     ;(this.whiteCore.material  as THREE.SpriteMaterial).opacity = op * Math.min(whitePulse * chargedMul, 1.0)
     ;(this.purpleCore.material as THREE.SpriteMaterial).opacity = op * (0.82 + this.flashIntensity * 0.28) * chargedMul
     ;(this.innerGlow.material  as THREE.SpriteMaterial).opacity = op * (0.68 + this.flashIntensity * 0.22) * chargedMul
@@ -337,18 +360,6 @@ export class HollowPurpleEffect extends EffectRenderer {
   }
 
   setPosition(pos: THREE.Vector3): void { this.group.position.copy(pos) }
-
-  async dissipate(): Promise<void> {
-    this.targetOpacity = 0
-    await new Promise<void>(res => {
-      const deadline = performance.now() + 2000
-      const c = () => {
-        if (this.currentOpacity < 0.01 || performance.now() > deadline) { res(); return }
-        requestAnimationFrame(c)
-      }
-      c()
-    })
-  }
 
   dispose(): void {
     for (const b of this.thickBolts) b.dispose()

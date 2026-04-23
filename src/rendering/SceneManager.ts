@@ -10,15 +10,14 @@ export class SceneManager {
   private renderer: THREE.WebGLRenderer
   private canvas: HTMLCanvasElement
   private effects: Set<EffectRenderer> = new Set()
+  private dyingEffects: Set<EffectRenderer> = new Set()
   private bgMaterial!: THREE.ShaderMaterial
   private videoTexture!: THREE.VideoTexture
   private frustumWidth = 2
   private frustumHeight = 2
-  // Simple realistic flicker — very dark base, rare instant flash → gap → optional re-flash
-  private flickPhase: 'dark' | 'flash' | 'gap' | 'reflash' = 'dark'
-  private flickerTimer    = 1.0
-  private flickerBright   = 0.07
-  private flickerReflash  = false
+  private readonly _distCenters   = [new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5)]
+  private readonly _distStrengths = [0, 0, 0]
+  private readonly _distTypes     = [0, 0, 0]
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -32,7 +31,8 @@ export class SceneManager {
       alpha: false,
     })
     this.renderer.setClearColor(0x000000, 1)
-    this.renderer.setPixelRatio(window.devicePixelRatio)
+    // Cap pixel ratio at 1.5 — beyond that costs huge GPU fill-rate with no visible benefit
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   }
 
   initialize(videoElement: HTMLVideoElement): void {
@@ -57,8 +57,8 @@ export class SceneManager {
       uniforms: {
         uVideoTexture: { value: this.videoTexture },
         uTime: { value: 0 },
-        uDarkness: { value: 0.5 },
-        uDistortionCenters: { value: [new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5)] },
+        uDarkness: { value: 1.0 },
+      uDistortionCenters: { value: this._distCenters },
         uDistortionStrengths: { value: [0, 0, 0] },
         uDistortionTypes: { value: [0, 0, 0] },
         uActiveDistortions: { value: 0 },
@@ -102,14 +102,28 @@ export class SceneManager {
     return new THREE.Vector3(x, y, 0)
   }
 
+  /** Instantly restores full brightness — call when shooting purple. */
+  clearDarkState(): void {
+    this.bgMaterial.uniforms.uDarkness.value = 1.0
+  }
+
   addEffect(effect: EffectRenderer): void {
     this.effects.add(effect)
     this.scene.add(effect.getObject3D())
   }
 
+  /** Triggers the dissipate animation; effect stays rendered until isDone then auto-disposes. */
   removeEffect(effect: EffectRenderer): void {
     if (!this.effects.has(effect)) return
     this.effects.delete(effect)
+    effect.beginDissipate()
+    this.dyingEffects.add(effect)
+  }
+
+  /** Immediate removal with no animation — for beams, projectiles, and forced clears. */
+  killEffect(effect: EffectRenderer): void {
+    this.effects.delete(effect)
+    this.dyingEffects.delete(effect)
     this.scene.remove(effect.getObject3D())
     effect.dispose()
   }
@@ -118,87 +132,52 @@ export class SceneManager {
     // Update time
     this.bgMaterial.uniforms.uTime.value += deltaTime
 
-    // Collect distortion info from active effects
-    const centers: THREE.Vector2[] = []
-    const strengths: number[] = []
-    const types: number[] = []
+    // Collect distortion info — reuse pooled arrays, no allocations
+    let numActive = 0
     let wantDark = false
 
     for (const effect of this.effects) {
       effect.update(deltaTime)
-      // Hide/show effect meshes based on effectsEnabled toggle
       effect.getObject3D().visible = effectsEnabled
       if (effectsEnabled && effect.darkenBackground) wantDark = true
-      if (effectsEnabled && effect.distortionType !== 0 && effect.distortionStrength > 0) {
-        centers.push(new THREE.Vector2(effect.normalizedPosition.x, effect.normalizedPosition.y))
-        strengths.push(effect.distortionStrength)
-        types.push(effect.distortionType)
+      if (effectsEnabled && effect.distortionType !== 0 && effect.distortionStrength > 0 && numActive < 3) {
+        this._distCenters[numActive].set(effect.normalizedPosition.x, effect.normalizedPosition.y)
+        this._distStrengths[numActive] = effect.distortionStrength
+        this._distTypes[numActive]     = effect.distortionType
+        numActive++
       }
     }
 
-    // Darkness + lightning flicker when purple active
-    if (wantDark) {
-      this.flickerTimer -= deltaTime
-      switch (this.flickPhase) {
-        case 'dark':
-          // Settle to dim baseline (not pitch black — still see the scene)
-          this.flickerBright += (0.20 - this.flickerBright) * Math.min(deltaTime * 6, 1)
-          if (this.flickerTimer <= 0) {
-            this.flickerBright  = 0.45 + Math.random() * 0.35   // flash 0.45–0.80
-            this.flickerReflash = Math.random() < 0.55
-            this.flickPhase     = 'flash'
-            this.flickerTimer   = 0.10 + Math.random() * 0.18   // longer flash: 0.10–0.28s
-          }
-          break
-        case 'flash':
-          if (this.flickerTimer <= 0) {
-            this.flickerBright = 0.10
-            this.flickPhase    = 'gap'
-            this.flickerTimer  = 0.06 + Math.random() * 0.10
-          }
-          break
-        case 'gap':
-          if (this.flickerTimer <= 0) {
-            if (this.flickerReflash) {
-              this.flickerBright  = 0.30 + Math.random() * 0.25
-              this.flickerReflash = false
-              this.flickPhase     = 'reflash'
-              this.flickerTimer   = 0.08 + Math.random() * 0.12
-            } else {
-              this.flickPhase   = 'dark'
-              this.flickerTimer = 0.4 + Math.random() * 1.8   // shorter quiet: 0.4–2.2s
-            }
-          }
-          break
-        case 'reflash':
-          if (this.flickerTimer <= 0) {
-            this.flickPhase   = 'dark'
-            this.flickerTimer = 0.4 + Math.random() * 1.8
-          }
-          break
+    // Tick dying effects — they stay in the scene until their dissipate animation completes
+    for (const effect of this.dyingEffects) {
+      effect.update(deltaTime)
+      effect.getObject3D().visible = effectsEnabled
+      // Dying effects still contribute to atmosphere so darkness/flicker doesn't cut mid-animation
+      if (effectsEnabled && effect.darkenBackground) wantDark = true
+    }
+    for (const effect of this.dyingEffects) {
+      if (effect.isDone) {
+        this.dyingEffects.delete(effect)
+        this.scene.remove(effect.getObject3D())
+        effect.dispose()
       }
-      this.bgMaterial.uniforms.uDarkness.value = this.flickerBright
-    } else {
-      // Smooth return to full brightness
-      const cur = this.bgMaterial.uniforms.uDarkness.value as number
-      this.bgMaterial.uniforms.uDarkness.value = cur + (1.0 - cur) * Math.min(deltaTime * 3, 1)
-      this.flickPhase    = 'dark'
-      this.flickerBright = 0.20
-      this.flickerTimer  = 0.3 + Math.random() * 0.6
     }
 
-    // Pad to 3 entries (shader requires exactly 3 slots)
-    const numActive = centers.length
-    while (centers.length < 3) {
-      centers.push(new THREE.Vector2(0.5, 0.5))
-      strengths.push(0)
-      types.push(0)
+    // Pad remaining slots to zero
+    for (let i = numActive; i < 3; i++) {
+      this._distCenters[i].set(0.5, 0.5)
+      this._distStrengths[i] = 0
+      this._distTypes[i]     = 0
     }
 
-    this.bgMaterial.uniforms.uDistortionCenters.value = centers
-    this.bgMaterial.uniforms.uDistortionStrengths.value = strengths
-    this.bgMaterial.uniforms.uDistortionTypes.value = types
-    this.bgMaterial.uniforms.uActiveDistortions.value = numActive
+    // Smooth darkening when domain/purple active, smooth return to full brightness otherwise
+    const darknessTarget = wantDark ? 0.15 : 1.0
+    const curDark = this.bgMaterial.uniforms.uDarkness.value as number
+    this.bgMaterial.uniforms.uDarkness.value = curDark + (darknessTarget - curDark) * Math.min(deltaTime * 6, 1)
+
+    this.bgMaterial.uniforms.uDistortionStrengths.value = this._distStrengths
+    this.bgMaterial.uniforms.uDistortionTypes.value     = this._distTypes
+    this.bgMaterial.uniforms.uActiveDistortions.value   = numActive
 
     this.renderer.render(this.scene, this.camera)
   }

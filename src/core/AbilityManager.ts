@@ -24,8 +24,7 @@ const DOMAIN_DURATION_S   = 10.0   // seconds the Infinite Void stays active
 // ── Normalized pinch flick detection ──
 const PINCH_THRESHOLD  = 0.28
 const OPEN_THRESHOLD   = 0.50
-const FLICK_VELOCITY   = 2.5    // raised: requires more deliberate release
-const MIN_PINCH_FRAMES = 5      // raised: must hold pinch longer
+const MIN_PINCH_FRAMES = 3      // frames of closed pinch required before a flick counts
 
 export interface FlickDebugState {
   normalizedPinch: number
@@ -117,7 +116,6 @@ export class AbilityManager {
   }
 
   private onGesture(event: GestureEvent): void {
-    this.logEvent(`gesture:${event.type} (${(event.confidence * 100).toFixed(0)}%)`)
 
     if (event.type === GestureType.FINGER_FLICK_LEFT || event.type === GestureType.FINGER_FLICK_RIGHT) {
       this.handleFlick()
@@ -249,8 +247,7 @@ export class AbilityManager {
 
   private clearMergeBeam(): void {
     if (this.mergeBeam) {
-      this.sceneManager.removeEffect(this.mergeBeam)
-      this.mergeBeam.dispose()
+      this.sceneManager.killEffect(this.mergeBeam)
       this.mergeBeam = null
     }
   }
@@ -302,6 +299,7 @@ export class AbilityManager {
     this.projectiles.push(shootEffect)
 
     this.sceneManager.removeEffect(purple.getEffect())
+    this.sceneManager.clearDarkState()
     this.soundManager.play('shoot')
     this.logEvent('FLICK → SHOOT!')
     this.postShootBlockUntil = performance.now() + POST_SHOOT_BLOCK_MS
@@ -317,9 +315,8 @@ export class AbilityManager {
       // Still tick projectiles in case any were in-flight before domain
       for (let i = this.projectiles.length - 1; i >= 0; i--) {
         const proj = this.projectiles[i]
-        proj.update(deltaTime)
         if (proj.isExpired()) {
-          this.sceneManager.removeEffect(proj)
+          this.sceneManager.killEffect(proj)
           this.projectiles.splice(i, 1)
         }
       }
@@ -357,12 +354,13 @@ export class AbilityManager {
         if (normPinch < PINCH_THRESHOLD) {
           this.pinchHeldFrames = Math.min(this.pinchHeldFrames + 1, 60)
           if (this.pinchHeldFrames >= MIN_PINCH_FRAMES) this.pinchWasHeld = true
-        } else if (normPinch > OPEN_THRESHOLD && this.pinchWasHeld && velocity > FLICK_VELOCITY) {
-          this.logEvent(`flick detected v=${velocity.toFixed(2)}`)
+        } else if (normPinch > OPEN_THRESHOLD && this.pinchWasHeld) {
+          // Held pinch then opened past threshold — that's the flick, no velocity gate needed
+          this.logEvent(`flick v=${velocity.toFixed(2)}`)
           this.handleFlick()
           return
         } else if (normPinch > OPEN_THRESHOLD) {
-          // Slowly release without fast motion → reset pinch
+          // Opened without holding — reset
           this.pinchHeldFrames = 0
           this.pinchWasHeld    = false
         }
@@ -382,9 +380,9 @@ export class AbilityManager {
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i]
-      proj.update(deltaTime)
+      // effect.update() is called by SceneManager — only check expiry here
       if (proj.isExpired()) {
-        this.sceneManager.removeEffect(proj)
+        this.sceneManager.killEffect(proj)
         this.projectiles.splice(i, 1)
       }
     }
@@ -401,7 +399,7 @@ export class AbilityManager {
       }
       const lastSeen = this.lastSeenTime.get(type) ?? 0
       if (now - lastSeen > GRACE_PERIOD_MS && ability.state === AbilityState.IDLE) {
-        ability.onDissipate()
+        // removeEffect triggers the dissipate animation; effect auto-disposes when done
         this.sceneManager.removeEffect(ability.getEffect())
         this.activeAbilities.delete(type)
         this.lastSeenTime.delete(type)

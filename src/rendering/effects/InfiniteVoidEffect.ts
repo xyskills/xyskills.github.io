@@ -1,7 +1,22 @@
 import * as THREE from 'three'
 import { EffectRenderer } from './EffectRenderer'
 
-// Clip-space full-screen quad — bypasses MVP, always covers exactly the screen
+/**
+ * Infinite Void — full-screen domain expansion.
+ *
+ * Visual approach (matching the anime reference):
+ * - A massive BLACK HOLE at the center — pure void sphere
+ * - Gravitational lensing: the camera feed bends and warps around the void
+ * - Blue/white accretion ring glowing at the event horizon
+ * - Ink-splatter / paint-splash particles ejected outward (white/blue on black)
+ * - Everything outside the void gets pulled inward (radial distortion)
+ * - Slow dramatic zoom pull-back as the domain expands
+ *
+ * The key visual is the DISTORTION of the real camera feed — the room itself
+ * appears to warp and bend into the void. The shader handles this by modifying
+ * UV coordinates to create a gravitational lensing effect on the background video.
+ */
+
 const VOID_VERT = /* glsl */`
 varying vec2 vUv;
 void main() {
@@ -13,79 +28,162 @@ void main() {
 const VOID_FRAG = /* glsl */`
 uniform float uTime;
 uniform float uOpacity;
-uniform float uBuildUp;
+uniform float uBuildUp;   // 0..1 over BUILD_TIME
 uniform float uAspect;
-uniform float uZoom;    // starts > 1 (zoomed in), falls to 1.0 as domain expands
+
 varying vec2 vUv;
 
+// Simplex-ish noise for organic shapes
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(hash(i),            hash(i + vec2(1,0)), f.x),
+    mix(hash(i + vec2(0,1)),hash(i + vec2(1,1)), f.x), f.y
+  );
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += a * noise(p);
+    p *= 2.1;
+    a *= 0.5;
+  }
+  return v;
+}
+
 void main() {
-  // uZoom: 12 → 1 during build-up gives a pull-back / domain-expansion zoom
-  vec2 uv = (vUv - 0.5) * uZoom;
+  // Aspect-corrected coordinates centered at screen center
+  vec2 uv = (vUv - 0.5);
   uv.x *= uAspect;
 
   float r = length(uv);
   float theta = atan(uv.y, uv.x);
+  float build = uBuildUp;
 
-  // Swirling vortex that tightens inward over time
-  float twist = theta - r * 5.0 + uTime * 0.6;
-  float ring1 = sin(r * 22.0 - uTime * 3.2 + twist * 1.8) * 0.5 + 0.5;
-  float ring2 = sin(r * 9.0  - uTime * 1.6 + twist * 0.9) * 0.5 + 0.5;
-  float rings = pow(ring1 * 0.65 + ring2 * 0.35, 2.8);
+  // ── BLACK HOLE CORE ──
+  // Hard sphere of pure void — grows during build-up
+  float voidRadius = 0.08 + build * 0.18;
+  float sphereMask = smoothstep(voidRadius - 0.02, voidRadius, r);
 
-  // Blue rim at the void's event horizon
-  float rim = smoothstep(0.31, 0.25, r) * smoothstep(0.16, 0.22, r);
+  // ── GRAVITATIONAL LENSING RING ──
+  // Einstein ring: bright ring right at the event horizon
+  float ringInner = voidRadius - 0.01;
+  float ringOuter = voidRadius + 0.06 * build;
+  float ring = smoothstep(ringInner, voidRadius, r) * smoothstep(ringOuter, voidRadius + 0.01, r);
+  // Pulsing ring brightness
+  ring *= 1.0 + 0.3 * sin(uTime * 4.0 + r * 20.0);
 
-  // Pure black sphere at center
-  float sphere = smoothstep(0.0, 0.22, r);
+  // ── ACCRETION SWIRL ──
+  // Swirling matter being pulled inward
+  float swirl = theta + r * 6.0 - uTime * 0.8;
+  float accretion = sin(swirl * 4.0) * 0.5 + 0.5;
+  accretion *= smoothstep(voidRadius + 0.12, voidRadius + 0.02, r);
+  accretion *= smoothstep(voidRadius - 0.01, voidRadius + 0.04, r);
+  accretion *= build;
 
-  // Ink splatter using domain-warped noise near edges
-  vec2 warpUv = uv + vec2(sin(uv.y * 8.0 + uTime * 0.4) * 0.04, cos(uv.x * 7.0 + uTime * 0.3) * 0.04);
-  float splat  = hash(floor(warpUv * 18.0)) * (1.0 - smoothstep(0.28, 0.65, r));
-  float splash = step(0.72, splat) * (1.0 - smoothstep(0.32, 0.70, r));
+  // ── RADIAL DISTORTION STREAKS ──
+  // Light being stretched radially toward the void
+  float streakNoise = fbm(vec2(theta * 3.0 + uTime * 0.15, r * 8.0 - uTime * 1.5));
+  float streaks = pow(streakNoise, 2.0) * smoothstep(0.8, 0.15, r) * build;
 
-  // Outer fade
-  float fade = 1.0 - smoothstep(0.18, 0.72, r);
+  // ── INK SPLASH / SPACE FRACTURES ──
+  // Warped noise that creates the dark splatter look from the reference
+  vec2 warpUv = uv * 4.0 + vec2(
+    sin(uTime * 0.2 + uv.y * 3.0) * 0.3,
+    cos(uTime * 0.15 + uv.x * 2.5) * 0.3
+  );
+  float splat = fbm(warpUv + uTime * 0.08);
+  float splatMask = step(0.58, splat) * smoothstep(0.7, 0.2, r) * build;
 
-  // Colors
-  vec3 deepSpace = vec3(0.00, 0.01, 0.06);
-  vec3 ringBlue  = vec3(0.04, 0.22, 0.82);
-  vec3 rimGlow   = vec3(0.12, 0.52, 1.00);
-  vec3 splatCol  = vec3(0.85, 0.90, 1.00);
+  // ── OUTER VIGNETTE ──
+  // Everything far from center darkens to space
+  float vignette = smoothstep(0.9, 0.25, r) * build;
 
-  vec3 color  = deepSpace;
-  color      += ringBlue * rings * fade * 1.1;
-  color      += rimGlow  * rim   * 2.8;
-  color      += splatCol * splash * 0.9;
-  color      *= sphere;
+  // ── COMPOSE COLORS ──
+  vec3 voidBlack  = vec3(0.0);
+  vec3 ringBlue   = vec3(0.15, 0.55, 1.0);
+  vec3 ringWhite  = vec3(0.85, 0.92, 1.0);
+  vec3 accColor   = vec3(0.08, 0.28, 0.85);
+  vec3 streakCol  = vec3(0.06, 0.18, 0.50);
+  vec3 splatWhite = vec3(0.80, 0.88, 1.0);
 
-  float alpha = clamp(uOpacity * uBuildUp * (fade + rim * 0.4), 0.0, 0.96);
+  vec3 color = voidBlack;
 
+  // Streaks: radial energy being sucked in
+  color += streakCol * streaks * 1.5;
+
+  // Accretion disk
+  color += accColor * accretion * 2.0;
+
+  // Einstein ring glow — white-blue hot
+  color += mix(ringBlue, ringWhite, ring * 0.6) * ring * 4.0;
+
+  // Ink splats — bright white patches that evoke the anime look
+  color += splatWhite * splatMask * 1.2;
+
+  // Everything inside the void sphere is pure black
+  color *= sphereMask;
+
+  // Dark vignette pulls the whole scene dark
+  float darkening = mix(1.0, 0.0, vignette * 0.85);
+
+  // Alpha: strong in the center, fading at edges
+  float alpha = uOpacity * clamp(
+    (1.0 - sphereMask) +   // solid inside void
+    ring * 2.5 +
+    accretion * 1.5 +
+    streaks * 1.2 +
+    splatMask * 0.9 +
+    vignette * 0.7,
+    0.0, 1.0
+  );
+
+  // Darken the background through alpha (composite the darkness)
   gl_FragColor = vec4(color, alpha);
 }
 `
 
-// Debris particles that orbit the void boundary and spiral inward
-const DEBRIS_COUNT = 240
+const SPLASH_COUNT = 180
+const DEBRIS_COUNT = 120
 
 export class InfiniteVoidEffect extends EffectRenderer {
   private voidMaterial: THREE.ShaderMaterial
+
+  // Splash particles — white/blue ink ejections
+  private splashPositions: Float32Array
+  private splashVelocities: Float32Array // vx, vy, life per particle
+  private splashColors: Float32Array
+  private splashSizes: Float32Array
+  private splashPoints: THREE.Points
+  private splashGeom: THREE.BufferGeometry
+
+  // Debris particles orbiting the void
+  private debrisAngles: Float32Array
+  private debrisRadii: Float32Array
+  private debrisSpeeds: Float32Array
   private debrisPositions: Float32Array
-  private debrisVelocities: Float32Array   // (angle, radius, radialVel) per particle
   private debrisPoints: THREE.Points
+  private debrisGeom: THREE.BufferGeometry
 
   private opacity       = 0
   private targetOpacity = 0
   private time          = 0
   private buildUp       = 0
-  private readonly BUILD_TIME = 3.5
+  private readonly BUILD_TIME = 4.0
 
   constructor() {
     super()
     this.darkenBackground = true
+    this.distortionType = 2
+    this.distortionStrength = 0
 
     // ── Full-screen vortex plane ──
     const planeGeom = new THREE.PlaneGeometry(2, 2)
@@ -97,53 +195,116 @@ export class InfiniteVoidEffect extends EffectRenderer {
         uOpacity: { value: 0 },
         uBuildUp: { value: 0 },
         uAspect:  { value: window.innerWidth / window.innerHeight },
-        uZoom:    { value: 12.0 },   // starts zoomed in, pulls back to 1.0
       },
       transparent: true,
       depthWrite: false,
       depthTest: false,
+      blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
     })
     const plane = new THREE.Mesh(planeGeom, this.voidMaterial)
     plane.renderOrder = 99
     this.group.add(plane)
 
-    // ── Debris particles (world-space, orbiting the void center) ──
-    this.debrisPositions  = new Float32Array(DEBRIS_COUNT * 3)
-    this.debrisVelocities = new Float32Array(DEBRIS_COUNT * 3) // angle, radius, dRadius
+    // ── Splash particles (ink splatters ejected outward) ──
+    this.splashPositions  = new Float32Array(SPLASH_COUNT * 3)
+    this.splashVelocities = new Float32Array(SPLASH_COUNT * 3) // vx, vy, life
+    this.splashColors     = new Float32Array(SPLASH_COUNT * 3)
+    this.splashSizes      = new Float32Array(SPLASH_COUNT)
 
-    for (let i = 0; i < DEBRIS_COUNT; i++) {
-      const angle  = Math.random() * Math.PI * 2
-      const radius = 0.35 + Math.random() * 1.8
-      this.debrisVelocities[i * 3 + 0] = angle
-      this.debrisVelocities[i * 3 + 1] = radius
-      this.debrisVelocities[i * 3 + 2] = -(0.04 + Math.random() * 0.08) // spiral inward speed
-      this.debrisPositions[i * 3 + 0] = Math.cos(angle) * radius
-      this.debrisPositions[i * 3 + 1] = Math.sin(angle) * radius
-      this.debrisPositions[i * 3 + 2] = 0
+    for (let i = 0; i < SPLASH_COUNT; i++) {
+      this.respawnSplash(i)
     }
 
-    const debrisGeom = new THREE.BufferGeometry()
-    debrisGeom.setAttribute('position', new THREE.BufferAttribute(this.debrisPositions, 3))
+    this.splashGeom = new THREE.BufferGeometry()
+    this.splashGeom.setAttribute('position', new THREE.BufferAttribute(this.splashPositions, 3))
+    this.splashGeom.setAttribute('color',    new THREE.BufferAttribute(this.splashColors, 3))
+    this.splashGeom.setAttribute('size',     new THREE.BufferAttribute(this.splashSizes, 1))
 
-    const debrisMat = new THREE.PointsMaterial({
-      color: 0xaad4ff,
-      size: 0.025,
+    this.splashPoints = new THREE.Points(this.splashGeom, new THREE.PointsMaterial({
+      size: 0.04,
+      vertexColors: true,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       sizeAttenuation: true,
-    })
-    this.debrisPoints = new THREE.Points(debrisGeom, debrisMat)
+    }))
+    this.splashPoints.renderOrder = 101
+    this.group.add(this.splashPoints)
+
+    // ── Debris particles (orbital) ──
+    this.debrisAngles    = new Float32Array(DEBRIS_COUNT)
+    this.debrisRadii     = new Float32Array(DEBRIS_COUNT)
+    this.debrisSpeeds    = new Float32Array(DEBRIS_COUNT)
+    this.debrisPositions = new Float32Array(DEBRIS_COUNT * 3)
+
+    for (let i = 0; i < DEBRIS_COUNT; i++) {
+      this.debrisAngles[i] = Math.random() * Math.PI * 2
+      this.debrisRadii[i]  = 0.25 + Math.random() * 1.2
+      this.debrisSpeeds[i] = 0.3 + Math.random() * 1.5
+    }
+
+    this.debrisGeom = new THREE.BufferGeometry()
+    this.debrisGeom.setAttribute('position', new THREE.BufferAttribute(this.debrisPositions, 3))
+
+    this.debrisPoints = new THREE.Points(this.debrisGeom, new THREE.PointsMaterial({
+      color: 0x8cb8ff,
+      size: 0.02,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    }))
     this.debrisPoints.renderOrder = 100
     this.group.add(this.debrisPoints)
   }
 
+  private respawnSplash(i: number): void {
+    // Start near void center, eject outward
+    const angle = Math.random() * Math.PI * 2
+    const speed = 0.2 + Math.random() * 0.8
+    this.splashPositions[i * 3]     = 0
+    this.splashPositions[i * 3 + 1] = 0
+    this.splashPositions[i * 3 + 2] = 0
+    this.splashVelocities[i * 3]     = Math.cos(angle) * speed
+    this.splashVelocities[i * 3 + 1] = Math.sin(angle) * speed
+    this.splashVelocities[i * 3 + 2] = 0 // life counter
+
+    // Color: mix of white, light blue, and occasional bright cyan
+    const t = Math.random()
+    if (t < 0.4) {
+      // White
+      this.splashColors[i * 3] = 0.85; this.splashColors[i * 3 + 1] = 0.90; this.splashColors[i * 3 + 2] = 1.0
+    } else if (t < 0.7) {
+      // Light blue
+      this.splashColors[i * 3] = 0.3; this.splashColors[i * 3 + 1] = 0.6; this.splashColors[i * 3 + 2] = 1.0
+    } else {
+      // Dark blue
+      this.splashColors[i * 3] = 0.05; this.splashColors[i * 3 + 1] = 0.15; this.splashColors[i * 3 + 2] = 0.6
+    }
+
+    this.splashSizes[i] = 0.02 + Math.random() * 0.06
+  }
+
   spawn(): void {
+    super.spawn()
     this.opacity       = 0
     this.targetOpacity = 1
     this.buildUp       = 0
     this.time          = 0
+  }
+
+  override beginDissipate(): void {
+    this.targetOpacity = 0
+    this.darkenBackground = false  // stop darkening immediately when domain ends
+    // Don't call super — InfiniteVoid manages its own fade, isDone watches opacity
+  }
+
+  override get isDone(): boolean {
+    return this.targetOpacity === 0 && this.opacity < 0.01
   }
 
   update(dt: number): void {
@@ -151,65 +312,75 @@ export class InfiniteVoidEffect extends EffectRenderer {
     this.buildUp = Math.min(this.buildUp + dt / this.BUILD_TIME, 1.0)
     this.opacity += (this.targetOpacity - this.opacity) * Math.min(dt * 1.5, 1)
 
+    // Drive distortion strength from build-up
+    this.distortionStrength = this.buildUp * this.opacity * 0.8
+
     const u = this.voidMaterial.uniforms
     u.uTime.value    = this.time
     u.uOpacity.value = this.opacity
     u.uBuildUp.value = this.buildUp
     u.uAspect.value  = window.innerWidth / window.innerHeight
-    // Zoom pulls back: 12 → 1 over the first half of build-up, then stays at 1
-    u.uZoom.value    = 1.0 + 11.0 * Math.max(0, 1 - this.buildUp * 2)
 
-    // Animate debris: orbit + spiral inward
-    const posAttr = this.debrisPoints.geometry.attributes.position as THREE.BufferAttribute
-    for (let i = 0; i < DEBRIS_COUNT; i++) {
-      let angle  = this.debrisVelocities[i * 3 + 0]
-      let radius = this.debrisVelocities[i * 3 + 1]
-      const dr   = this.debrisVelocities[i * 3 + 2]
+    // ── Update splash particles ──
+    const spAttr = this.splashGeom.attributes
+    for (let i = 0; i < SPLASH_COUNT; i++) {
+      let life = this.splashVelocities[i * 3 + 2]
+      life += dt
 
-      angle  += dt * (1.2 + (1 - radius) * 2.0) // spin faster near center
-      radius += dr * dt * this.buildUp
-
-      if (radius < 0.05) {
-        // Respawn at outer ring
-        radius = 0.5 + Math.random() * 1.6
-        angle  = Math.random() * Math.PI * 2
+      if (life > 1.5 + Math.random() * 1.5) {
+        this.respawnSplash(i)
+        life = 0
       }
 
-      this.debrisVelocities[i * 3 + 0] = angle
-      this.debrisVelocities[i * 3 + 1] = radius
+      const vx = this.splashVelocities[i * 3]
+      const vy = this.splashVelocities[i * 3 + 1]
 
-      posAttr.array[i * 3 + 0] = Math.cos(angle) * radius
-      posAttr.array[i * 3 + 1] = Math.sin(angle) * radius
+      // Decelerate + slight inward pull (gravity)
+      const px = this.splashPositions[i * 3]
+      const py = this.splashPositions[i * 3 + 1]
+      const dist = Math.sqrt(px * px + py * py) + 0.01
+      const pull = 0.02 * this.buildUp / dist
+
+      this.splashPositions[i * 3]     += (vx - px * pull) * dt
+      this.splashPositions[i * 3 + 1] += (vy - py * pull) * dt
+      this.splashVelocities[i * 3 + 2] = life
+
+      // Fade based on life
+      const fade = life < 0.15 ? life / 0.15 : Math.max(0, 1 - (life - 0.5) / 1.5)
+      this.splashSizes[i] = (0.02 + Math.random() * 0.04) * fade * this.buildUp
     }
-    posAttr.needsUpdate = true
+    ;(spAttr.position as THREE.BufferAttribute).needsUpdate = true
+    ;(spAttr.size as THREE.BufferAttribute).needsUpdate = true
+    ;(this.splashPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.7
 
-    ;(this.debrisPoints.material as THREE.PointsMaterial).opacity =
-      this.opacity * this.buildUp * 0.6
+    // ── Update debris particles ──
+    const dPos = this.debrisGeom.attributes.position as THREE.BufferAttribute
+    for (let i = 0; i < DEBRIS_COUNT; i++) {
+      this.debrisAngles[i] += dt * this.debrisSpeeds[i] * (1 + (1 - this.debrisRadii[i]) * 1.5)
+      // Slow spiral inward
+      this.debrisRadii[i] -= dt * 0.03 * this.buildUp
+      if (this.debrisRadii[i] < 0.08) {
+        this.debrisRadii[i] = 0.4 + Math.random() * 1.0
+        this.debrisAngles[i] = Math.random() * Math.PI * 2
+      }
+
+      dPos.array[i * 3]     = Math.cos(this.debrisAngles[i]) * this.debrisRadii[i]
+      dPos.array[i * 3 + 1] = Math.sin(this.debrisAngles[i]) * this.debrisRadii[i]
+      dPos.array[i * 3 + 2] = 0
+    }
+    dPos.needsUpdate = true
+    ;(this.debrisPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.5
   }
 
   setPosition(_pos: THREE.Vector3): void {
-    // full-screen — position irrelevant for the plane; debris is at world origin (screen center)
-  }
-
-  async dissipate(): Promise<void> {
-    this.targetOpacity = 0
-    const deadline = performance.now() + 2000
-    await new Promise<void>(res => {
-      const check = () => {
-        if (this.opacity < 0.01 || performance.now() > deadline) { res(); return }
-        requestAnimationFrame(check)
-      }
-      check()
-    })
+    // Full-screen effect — position irrelevant
   }
 
   dispose(): void {
-    this.group.children.forEach(c => {
-      if (c instanceof THREE.Mesh || c instanceof THREE.Points) {
-        c.geometry.dispose()
-      }
-    })
     this.voidMaterial.dispose()
+    this.splashGeom.dispose()
+    ;(this.splashPoints.material as THREE.Material).dispose()
+    this.debrisGeom.dispose()
     ;(this.debrisPoints.material as THREE.Material).dispose()
   }
 
