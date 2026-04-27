@@ -1,9 +1,11 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import type { HandData } from '@/types/hand'
 import type { EventBus } from './EventBus'
+import { FaceTracker } from './FaceTracker'
 
 export class HandTracker {
   private handLandmarker: HandLandmarker | null = null
+  private faceTracker: FaceTracker
   private videoElement: HTMLVideoElement
   private eventBus: EventBus
   private running = false
@@ -18,9 +20,14 @@ export class HandTracker {
   private readonly DETECT_H = 480
   private skipCounter = 0
 
+  // Exponential landmark smoothing — reduces jitter without introducing OneEuro complexity
+  private smoothedLandmarks: Map<string, { x: number; y: number; z: number }[]> = new Map()
+  private readonly SMOOTH_ALPHA = 0.55  // 0 = sluggish, 1 = raw
+
   constructor(videoElement: HTMLVideoElement, eventBus: EventBus) {
     this.videoElement = videoElement
-    this.eventBus = eventBus
+    this.eventBus     = eventBus
+    this.faceTracker  = new FaceTracker(eventBus)
     this.detectionCanvas = document.createElement('canvas')
     this.detectionCanvas.width  = this.DETECT_W
     this.detectionCanvas.height = this.DETECT_H
@@ -30,17 +37,22 @@ export class HandTracker {
   async initialize(): Promise<void> {
     const vision = await FilesetResolver.forVisionTasks('/wasm')
 
-    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: '/models/hand_landmarker.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    })
+    // Load hand and face landmarkers from the same WASM context
+    const [handResult] = await Promise.all([
+      HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: '/models/hand_landmarker.task',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.72,
+        minHandPresenceConfidence:  0.70,
+        minTrackingConfidence:      0.65,
+      }),
+      this.faceTracker.initialize(vision),
+    ])
+    this.handLandmarker = handResult
 
     await this.startCamera()
   }
@@ -96,19 +108,50 @@ export class HandTracker {
 
         const result = this.handLandmarker.detectForVideo(this.detectionCanvas, now)
 
+        const seenHandedness = new Set<string>()
         const hands: HandData[] = []
         for (let i = 0; i < (result.landmarks?.length ?? 0); i++) {
+          const handedness = result.handedness[i][0].categoryName as 'Left' | 'Right'
+          seenHandedness.add(handedness)
+          const raw = result.landmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z }))
           hands.push({
-            landmarks:      result.landmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z })),
+            landmarks:      this.smoothLandmarks(handedness, raw),
             worldLandmarks: result.worldLandmarks[i].map((l) => ({ x: l.x, y: l.y, z: l.z })),
-            handedness:     result.handedness[i][0].categoryName as 'Left' | 'Right',
+            handedness,
           })
+        }
+        // Clear smoothing state for hands that have disappeared
+        for (const key of this.smoothedLandmarks.keys()) {
+          if (!seenHandedness.has(key)) this.smoothedLandmarks.delete(key)
         }
 
         this.eventBus.emit('handUpdate', hands)
+
+        // Face detection runs on the same downscaled frame — shares WASM runtime
+        this.faceTracker.detect(this.detectionCanvas, now)
       }
     }
 
     this.animationFrameId = requestAnimationFrame(() => this.detectFrame())
+  }
+
+  private smoothLandmarks(
+    handId: string,
+    raw: { x: number; y: number; z: number }[],
+  ): { x: number; y: number; z: number }[] {
+    const prev = this.smoothedLandmarks.get(handId)
+    if (!prev) {
+      const copy = raw.map(l => ({ ...l }))
+      this.smoothedLandmarks.set(handId, copy)
+      return copy
+    }
+    const a = this.SMOOTH_ALPHA
+    const smoothed = raw.map((lm, i) => ({
+      x: prev[i].x + a * (lm.x - prev[i].x),
+      y: prev[i].y + a * (lm.y - prev[i].y),
+      z: prev[i].z + a * (lm.z - prev[i].z),
+    }))
+    this.smoothedLandmarks.set(handId, smoothed)
+    return smoothed
   }
 }

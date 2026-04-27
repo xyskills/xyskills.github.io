@@ -32,11 +32,11 @@ export class MergeBeam extends EffectRenderer {
   constructor() {
     super()
 
-    this.blueGlow  = this.makeGlow(new THREE.Color(0.25, 0.65, 1.0),  0.40)
-    this.redGlow   = this.makeGlow(new THREE.Color(1.00, 0.08, 0.0),  0.40)
-    this.midGlow   = this.makeGlow(new THREE.Color(0.65, 0.10, 0.90), 0.50)
-    this.clashRing = this.makeGlow(new THREE.Color(1.00, 0.80, 0.90), 0.70)
-    this.clashGlow = this.makeGlow(new THREE.Color(1.00, 0.96, 1.00), 0.25)
+    this.blueGlow  = EffectRenderer.makeGlowSprite(new THREE.Color(0.25, 0.65, 1.0),  0.40)
+    this.redGlow   = EffectRenderer.makeGlowSprite(new THREE.Color(1.00, 0.08, 0.0),  0.40)
+    this.midGlow   = EffectRenderer.makeGlowSprite(new THREE.Color(0.65, 0.10, 0.90), 0.50)
+    this.clashRing = EffectRenderer.makeGlowSprite(new THREE.Color(1.00, 0.80, 0.90), 0.70)
+    this.clashGlow = EffectRenderer.makeGlowSprite(new THREE.Color(1.00, 0.96, 1.00), 0.25)
 
     for (const s of [this.midGlow, this.clashRing, this.clashGlow, this.blueGlow, this.redGlow]) {
       this.group.add(s)
@@ -55,26 +55,6 @@ export class MergeBeam extends EffectRenderer {
     this.group.add(this.particleMesh)
   }
 
-  private makeGlow(color: THREE.Color, baseScale: number): THREE.Sprite {
-    const s = 128
-    const cv = document.createElement('canvas'); cv.width = s; cv.height = s
-    const ctx = cv.getContext('2d')!
-    const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2)
-    const [r, gv, b] = [color.r, color.g, color.b].map(v => Math.round(v * 255))
-    g.addColorStop(0,    `rgba(${r},${gv},${b},1)`)
-    g.addColorStop(0.20, `rgba(${r},${gv},${b},0.65)`)
-    g.addColorStop(0.55, `rgba(${r},${gv},${b},0.18)`)
-    g.addColorStop(1,    'rgba(0,0,0,0)')
-    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s)
-    const mat = new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(cv), transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
-    })
-    const sp = new THREE.Sprite(mat)
-    sp.scale.set(baseScale, baseScale, 1)
-    return sp
-  }
-
   setEndpoints(start: THREE.Vector3, end: THREE.Vector3, intensity: number): void {
     this.start.copy(start)
     this.end.copy(end)
@@ -87,8 +67,6 @@ export class MergeBeam extends EffectRenderer {
     if (I <= 0) return
 
     const mid  = this.start.clone().add(this.end).multiplyScalar(0.5)
-    const dist = this.start.distanceTo(this.end)
-
     // Axis from blue → red, and perpendicular (the clash plane)
     const axis = this.end.clone().sub(this.start)
     const axisLen = axis.length()

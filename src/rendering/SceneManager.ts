@@ -1,6 +1,10 @@
 import * as THREE from 'three'
 import type { LandmarkPoint } from '@/types/hand'
 import type { EffectRenderer } from './effects/EffectRenderer'
+import type { ForceField } from './ForceField'
+import type { FaceData } from '@/types/face'
+import { AmbientDebris } from './AmbientDebris'
+import { SixEyesEffect } from './effects/SixEyesEffect'
 import distortionVertShader from './shaders/distortion-bg.vert.glsl'
 import distortionFragShader from './shaders/distortion-bg.frag.glsl'
 
@@ -13,8 +17,11 @@ export class SceneManager {
   private dyingEffects: Set<EffectRenderer> = new Set()
   private bgMaterial!: THREE.ShaderMaterial
   private videoTexture!: THREE.VideoTexture
-  private frustumWidth = 2
+  private frustumWidth  = 2
   private frustumHeight = 2
+  private debris!: AmbientDebris
+  private sixEyes!: SixEyesEffect
+  private activeForceFields: ForceField[] = []
   private readonly _distCenters   = [new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5)]
   private readonly _distStrengths = [0, 0, 0]
   private readonly _distTypes     = [0, 0, 0]
@@ -27,11 +34,11 @@ export class SceneManager {
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: true,
+      antialias: false,
       alpha: false,
+      powerPreference: 'high-performance',
     })
     this.renderer.setClearColor(0x000000, 1)
-    // Cap pixel ratio at 1.5 — beyond that costs huge GPU fill-rate with no visible benefit
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   }
 
@@ -76,6 +83,12 @@ export class SceneManager {
     const ambient = new THREE.AmbientLight(0xffffff, 0.6)
     this.scene.add(ambient)
 
+    this.debris = new AmbientDebris(this.frustumWidth, this.frustumHeight)
+    this.scene.add(this.debris.getObject3D())
+
+    this.sixEyes = new SixEyesEffect()
+    this.scene.add(this.sixEyes.getObject3D())
+
     window.addEventListener('resize', () => this.onResize())
   }
 
@@ -100,6 +113,14 @@ export class SceneManager {
     const x = -(point.x - 0.5) * this.frustumWidth
     const y = -(point.y - 0.5) * this.frustumHeight
     return new THREE.Vector3(x, y, 0)
+  }
+
+  /** Replace force fields for debris physics — called each frame by AbilityManager. */
+  setForceFields(fields: ForceField[]): void { this.activeForceFields = fields }
+
+  /** Feed latest face detection data to the Six Eyes overlay. Pass null when no face found. */
+  setFaceData(face: FaceData | null): void {
+    this.sixEyes.setFaceData(face, this.frustumWidth, this.frustumHeight)
   }
 
   /** Instantly restores full brightness — call when shooting purple. */
@@ -131,6 +152,15 @@ export class SceneManager {
   render(deltaTime: number, effectsEnabled = true): void {
     // Update time
     this.bgMaterial.uniforms.uTime.value += deltaTime
+
+    // Physics debris + Six Eyes
+    if (effectsEnabled) {
+      this.debris.update(deltaTime, this.activeForceFields)
+      this.sixEyes.update(deltaTime)
+      this.sixEyes.getObject3D().visible = true
+    } else {
+      this.sixEyes.getObject3D().visible = false
+    }
 
     // Collect distortion info — reuse pooled arrays, no allocations
     let numActive = 0
@@ -180,6 +210,11 @@ export class SceneManager {
     this.bgMaterial.uniforms.uActiveDistortions.value   = numActive
 
     this.renderer.render(this.scene, this.camera)
+  }
+
+  /** Lower pixel ratio during recording to reduce GPU fill-rate; restore after. */
+  setPixelRatio(ratio: number): void {
+    this.renderer.setPixelRatio(Math.min(ratio, 1.5))
   }
 
   getCanvas(): HTMLCanvasElement { return this.canvas }

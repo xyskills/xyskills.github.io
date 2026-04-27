@@ -18,18 +18,18 @@
         <div class="debug-section">{{ hand.handedness.toUpperCase() }} HAND</div>
         <div class="debug-row">
           pinch
-          <span class="val">{{ rawMetrics[i]?.normPinch.toFixed(3) ?? '—' }}</span>
-          <span :class="rawMetrics[i]?.normPinch < 0.25 ? 'tag-green' : rawMetrics[i]?.normPinch < 0.45 ? 'tag-yellow' : 'tag-dim'">
-            {{ rawMetrics[i]?.normPinch < 0.25 ? 'PINCHED' : rawMetrics[i]?.normPinch < 0.45 ? 'close' : 'open' }}
+          <span class="val">{{ rawMetrics?.[i]?.normPinch.toFixed(3) ?? '—' }}</span>
+          <span :class="(rawMetrics?.[i]?.normPinch ?? 1) < 0.25 ? 'tag-green' : (rawMetrics?.[i]?.normPinch ?? 1) < 0.45 ? 'tag-yellow' : 'tag-dim'">
+            {{ (rawMetrics?.[i]?.normPinch ?? 1) < 0.25 ? 'PINCHED' : (rawMetrics?.[i]?.normPinch ?? 1) < 0.45 ? 'close' : 'open' }}
           </span>
         </div>
         <div class="debug-row">
-          hand size <span class="val">{{ rawMetrics[i]?.handSize.toFixed(3) ?? '—' }}</span>
+          hand size <span class="val">{{ rawMetrics?.[i]?.handSize.toFixed(3) ?? '—' }}</span>
         </div>
         <div class="debug-row">
           fingers crossed
-          <span :class="rawMetrics[i]?.fingersCrossed ? 'tag-green' : 'tag-dim'">
-            {{ rawMetrics[i]?.fingersCrossed ? 'YES' : 'no' }}
+          <span :class="rawMetrics?.[i]?.fingersCrossed ? 'tag-green' : 'tag-dim'">
+            {{ rawMetrics?.[i]?.fingersCrossed ? 'YES' : 'no' }}
           </span>
         </div>
       </template>
@@ -207,7 +207,7 @@ defineExpose({ landmarkCanvas })
   font-family: monospace; font-size: 11px;
   padding: 8px 12px; border-radius: 6px;
   border: 1px solid rgba(0,255,0,0.2);
-  min-width: 220px; max-height: 92vh; overflow-y: auto;
+  min-width: 220px; max-width: min(280px, 90vw); max-height: 92vh; overflow-y: auto;
   pointer-events: none;
 }
 

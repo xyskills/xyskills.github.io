@@ -2,19 +2,20 @@ import * as THREE from 'three'
 import { EffectRenderer } from './EffectRenderer'
 
 /**
- * Infinite Void — full-screen domain expansion.
+ * Infinite Void — Gojo Satoru's "Unlimited Void" domain expansion.
  *
- * Visual approach (matching the anime reference):
- * - A massive BLACK HOLE at the center — pure void sphere
- * - Gravitational lensing: the camera feed bends and warps around the void
- * - Blue/white accretion ring glowing at the event horizon
- * - Ink-splatter / paint-splash particles ejected outward (white/blue on black)
- * - Everything outside the void gets pulled inward (radial distortion)
- * - Slow dramatic zoom pull-back as the domain expands
+ * Visual reference: the anime shows a blinding WHITE void filled with an
+ * overwhelming lattice of geometric lines — radial divisions, concentric rings,
+ * rotating angular sectors, and a cartesian grid — all converging on a bright
+ * central singularity. The edges bleed into deep indigo. The victim cannot
+ * process the infinite information and is paralysed.
  *
- * The key visual is the DISTORTION of the real camera feed — the room itself
- * appears to warp and bend into the void. The shader handles this by modifying
- * UV coordinates to create a gravitational lensing effect on the background video.
+ * Implementation:
+ * - Full-screen quad with a custom GLSL shader that builds all geometric layers
+ * - Domain expands as a circular wave from the centre during BUILD_TIME
+ * - Floating point-symbols orbit the void; splash + debris particles are dark
+ *   indigo so they're legible against the white background
+ * - No background darkening — the shader provides its own full-coverage colour
  */
 
 const VOID_VERT = /* glsl */`
@@ -28,150 +29,132 @@ void main() {
 const VOID_FRAG = /* glsl */`
 uniform float uTime;
 uniform float uOpacity;
-uniform float uBuildUp;   // 0..1 over BUILD_TIME
+uniform float uBuildUp;
 uniform float uAspect;
 
 varying vec2 vUv;
 
-// Simplex-ish noise for organic shapes
-float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float noise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(hash(i),            hash(i + vec2(1,0)), f.x),
-    mix(hash(i + vec2(0,1)),hash(i + vec2(1,1)), f.x), f.y
-  );
-}
-
-float fbm(vec2 p) {
-  float v = 0.0;
-  float a = 0.5;
-  for (int i = 0; i < 4; i++) {
-    v += a * noise(p);
-    p *= 2.1;
-    a *= 0.5;
-  }
-  return v;
-}
+float hash1(float n) { return fract(sin(n * 127.1)  * 43758.5453); }
+float hash2(float n) { return fract(sin(n * 311.7 + 5.0) * 12345.6789); }
 
 void main() {
-  // Aspect-corrected coordinates centered at screen center
-  vec2 uv = (vUv - 0.5);
+  const float PI  = 3.14159265;
+  const float TAU = 6.28318530;
+
+  vec2 uv = vUv - 0.5;
   uv.x *= uAspect;
 
-  float r = length(uv);
+  float r     = length(uv);
   float theta = atan(uv.y, uv.x);
   float build = uBuildUp;
+  float t     = uTime;
 
-  // ── BLACK HOLE CORE ──
-  // Hard sphere of pure void — grows during build-up
-  float voidRadius = 0.08 + build * 0.18;
-  float sphereMask = smoothstep(voidRadius - 0.02, voidRadius, r);
+  // ── BASE: white void fading to deep indigo at edges ──────────────────────
+  vec3 voidWhite  = vec3(0.97, 0.97, 1.00);
+  vec3 lineIndigo = vec3(0.04, 0.02, 0.22);
+  vec3 edgeBlue   = vec3(0.02, 0.01, 0.10);
 
-  // ── GRAVITATIONAL LENSING RING ──
-  // Einstein ring: bright ring right at the event horizon
-  float ringInner = voidRadius - 0.01;
-  float ringOuter = voidRadius + 0.06 * build;
-  float ring = smoothstep(ringInner, voidRadius, r) * smoothstep(ringOuter, voidRadius + 0.01, r);
-  // Pulsing ring brightness
-  ring *= 1.0 + 0.3 * sin(uTime * 4.0 + r * 20.0);
+  float edgeFactor = smoothstep(0.12, 0.60, r) * build;
+  vec3 color = mix(voidWhite, edgeBlue, edgeFactor * edgeFactor);
 
-  // ── ACCRETION SWIRL ──
-  // Swirling matter being pulled inward
-  float swirl = theta + r * 6.0 - uTime * 0.8;
-  float accretion = sin(swirl * 4.0) * 0.5 + 0.5;
-  accretion *= smoothstep(voidRadius + 0.12, voidRadius + 0.02, r);
-  accretion *= smoothstep(voidRadius - 0.01, voidRadius + 0.04, r);
-  accretion *= build;
+  // ── RADIAL LINES — 72 thin spokes radiating from centre ──────────────────
+  float numRad  = 72.0;
+  float angStep = TAU / numRad;
+  float normTheta = mod(theta + TAU, TAU);
+  float tLocal    = mod(normTheta, angStep) / angStep; // 0..1 within each sector
+  // Sharp thin spike at every sector boundary
+  float radLine = pow(1.0 - min(tLocal, 1.0 - tLocal) * 2.0, 32.0);
+  // Fade in from centre, fade before outer edge
+  radLine *= smoothstep(0.02, 0.10, r) * smoothstep(0.72, 0.45, r) * build;
 
-  // ── RADIAL DISTORTION STREAKS ──
-  // Light being stretched radially toward the void
-  float streakNoise = fbm(vec2(theta * 3.0 + uTime * 0.15, r * 8.0 - uTime * 1.5));
-  float streaks = pow(streakNoise, 2.0) * smoothstep(0.8, 0.15, r) * build;
+  // ── CONCENTRIC RINGS — 4 scales drifting inward ──────────────────────────
+  float rings = 0.0;
+  rings += pow(max(0.0, cos(r * 110.0 - t * 1.5)), 10.0) * 0.30;
+  rings += pow(max(0.0, cos(r *  55.0 - t * 0.9)), 12.0) * 0.45;
+  rings += pow(max(0.0, cos(r *  28.0 - t * 0.5)), 10.0) * 0.60;
+  rings += pow(max(0.0, cos(r *  14.0 - t * 0.25)), 8.0) * 0.40;
+  rings *= build * smoothstep(0.015, 0.06, r) * smoothstep(0.75, 0.55, r);
 
-  // ── INK SPLASH / SPACE FRACTURES ──
-  // Warped noise that creates the dark splatter look from the reference
-  vec2 warpUv = uv * 4.0 + vec2(
-    sin(uTime * 0.2 + uv.y * 3.0) * 0.3,
-    cos(uTime * 0.15 + uv.x * 2.5) * 0.3
-  );
-  float splat = fbm(warpUv + uTime * 0.08);
-  float splatMask = step(0.58, splat) * smoothstep(0.7, 0.2, r) * build;
+  // ── ROTATING ANGULAR SECTORS — 24-fold, slow clockwise spin ─────────────
+  float rTheta    = theta + t * 0.03;
+  float normRTheta = mod(rTheta + TAU, TAU);
+  float secStep   = TAU / 24.0;
+  float secLocal  = mod(normRTheta, secStep) / secStep;
+  float secLine   = pow(1.0 - min(secLocal, 1.0 - secLocal) * 2.0, 28.0) * 0.5;
+  secLine *= build * smoothstep(0.0, 0.10, r) * smoothstep(0.68, 0.30, r);
 
-  // ── OUTER VIGNETTE ──
-  // Everything far from center darkens to space
-  float vignette = smoothstep(0.9, 0.25, r) * build;
+  // ── CARTESIAN GRID — very slow CCW rotation ──────────────────────────────
+  float cartRot = t * 0.015;
+  float cg = cos(cartRot), sg = sin(cartRot);
+  vec2 gUv  = vec2(cg * uv.x - sg * uv.y, sg * uv.x + cg * uv.y) * 11.0;
+  float cartX = pow(abs(cos(gUv.x * PI)), 28.0);
+  float cartY = pow(abs(cos(gUv.y * PI)), 28.0);
+  float cartGrid = max(cartX, cartY) * 0.30;
+  cartGrid *= build * smoothstep(0.60, 0.18, r);
 
-  // ── COMPOSE COLORS ──
-  vec3 voidBlack  = vec3(0.0);
-  vec3 ringBlue   = vec3(0.15, 0.55, 1.0);
-  vec3 ringWhite  = vec3(0.85, 0.92, 1.0);
-  vec3 accColor   = vec3(0.08, 0.28, 0.85);
-  vec3 streakCol  = vec3(0.06, 0.18, 0.50);
-  vec3 splatWhite = vec3(0.80, 0.88, 1.0);
+  // ── COMPOSITE GEOMETRY ───────────────────────────────────────────────────
+  float geom = clamp(radLine * 0.75 + rings * 0.85 + secLine * 0.60 + cartGrid, 0.0, 1.0);
+  color = mix(color, lineIndigo, geom * 0.90);
 
-  vec3 color = voidBlack;
+  // ── FLOATING POINT-SYMBOLS — 16 orbiting bright dots ────────────────────
+  float symBright = 0.0;
+  for (int j = 0; j < 16; j++) {
+    float fj    = float(j);
+    float speed = 0.06 + hash1(fj) * 0.10;
+    float dir   = mod(fj, 2.0) < 1.0 ? 1.0 : -1.0;
+    float ang   = fj * 0.3927 + t * speed * dir;
+    float orbitR = 0.07 + hash2(fj) * 0.38;
+    vec2 sPos   = vec2(cos(ang) * orbitR, sin(ang) * orbitR);
+    float d     = length(uv - sPos);
+    symBright  += smoothstep(0.014, 0.0, d);
+    symBright  += smoothstep(0.055, 0.005, d) * 0.25;
+  }
+  symBright = min(symBright * build, 2.0);
+  // Blue-white glow dots visible against the white background
+  color  = mix(color, vec3(0.10, 0.08, 0.60), min(symBright * 0.55, 1.0));
+  color += vec3(0.20, 0.25, 0.80) * min(symBright * 0.35, 0.8);
 
-  // Streaks: radial energy being sucked in
-  color += streakCol * streaks * 1.5;
+  // ── CENTRE SINGULARITY — Gojo's Six Eyes ─────────────────────────────────
+  float coreR    = 0.022 + build * 0.012;
+  float coreHard = smoothstep(coreR, 0.0, r);
+  float coreSoft = smoothstep(coreR * 9.0, coreR * 0.5, r);
+  color  = mix(color, vec3(0.80, 0.88, 1.0), coreSoft * build * 0.55);
+  color += vec3(1.0, 1.0, 1.0) * coreHard;
+  color  = min(color, vec3(1.5)); // allow slight bloom overshoot
 
-  // Accretion disk
-  color += accColor * accretion * 2.0;
+  // ── DOMAIN EXPANSION MASK — circular wave expanding from centre ──────────
+  // At build=0 → expandR≈0.06; at build=1 → expandR≈1.16 (covers 16:9 corners)
+  float expandR  = 0.06 + build * 1.10;
+  float softness = 0.15 * (1.0 - build * 0.5);
+  float expansion = smoothstep(expandR, expandR - softness, r);
 
-  // Einstein ring glow — white-blue hot
-  color += mix(ringBlue, ringWhite, ring * 0.6) * ring * 4.0;
-
-  // Ink splats — bright white patches that evoke the anime look
-  color += splatWhite * splatMask * 1.2;
-
-  // Everything inside the void sphere is pure black
-  color *= sphereMask;
-
-  // Dark vignette pulls the whole scene dark
-  float darkening = mix(1.0, 0.0, vignette * 0.85);
-
-  // Alpha: strong in the center, fading at edges
-  float alpha = uOpacity * clamp(
-    (1.0 - sphereMask) +   // solid inside void
-    ring * 2.5 +
-    accretion * 1.5 +
-    streaks * 1.2 +
-    splatMask * 0.9 +
-    vignette * 0.7,
-    0.0, 1.0
-  );
-
-  // Darken the background through alpha (composite the darkness)
-  gl_FragColor = vec4(color, alpha);
+  float alpha = uOpacity * expansion;
+  gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
 }
 `
 
-const SPLASH_COUNT = 180
-const DEBRIS_COUNT = 120
+const SPLASH_COUNT = 150
+const DEBRIS_COUNT =  90
 
 export class InfiniteVoidEffect extends EffectRenderer {
   private voidMaterial: THREE.ShaderMaterial
 
-  // Splash particles — white/blue ink ejections
-  private splashPositions: Float32Array
-  private splashVelocities: Float32Array // vx, vy, life per particle
-  private splashColors: Float32Array
-  private splashSizes: Float32Array
-  private splashPoints: THREE.Points
-  private splashGeom: THREE.BufferGeometry
+  // Splash particles — indigo geometric fragments ejected outward
+  private splashPositions:  Float32Array
+  private splashVelocities: Float32Array // vx, vy, life
+  private splashColors:     Float32Array
+  private splashSizes:      Float32Array
+  private splashRandSizes:  Float32Array // pre-baked random base sizes (no hot-loop Math.random)
+  private splashPoints:     THREE.Points
+  private splashGeom:       THREE.BufferGeometry
 
-  // Debris particles orbiting the void
-  private debrisAngles: Float32Array
-  private debrisRadii: Float32Array
-  private debrisSpeeds: Float32Array
+  // Debris particles — dark orbital dots
+  private debrisAngles:    Float32Array
+  private debrisRadii:     Float32Array
+  private debrisSpeeds:    Float32Array
   private debrisPositions: Float32Array
-  private debrisPoints: THREE.Points
-  private debrisGeom: THREE.BufferGeometry
+  private debrisPoints:    THREE.Points
+  private debrisGeom:      THREE.BufferGeometry
 
   private opacity       = 0
   private targetOpacity = 0
@@ -181,14 +164,15 @@ export class InfiniteVoidEffect extends EffectRenderer {
 
   constructor() {
     super()
-    this.darkenBackground = true
-    this.distortionType = 2
+    // No background darkening — shader provides its own opaque coverage
+    this.darkenBackground   = false
+    this.distortionType     = 2
     this.distortionStrength = 0
 
-    // ── Full-screen vortex plane ──
+    // ── Full-screen void plane ──────────────────────────────────────────────
     const planeGeom = new THREE.PlaneGeometry(2, 2)
     this.voidMaterial = new THREE.ShaderMaterial({
-      vertexShader: VOID_VERT,
+      vertexShader:   VOID_VERT,
       fragmentShader: VOID_FRAG,
       uniforms: {
         uTime:    { value: 0 },
@@ -197,23 +181,25 @@ export class InfiniteVoidEffect extends EffectRenderer {
         uAspect:  { value: window.innerWidth / window.innerHeight },
       },
       transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.SrcAlphaFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
+      depthWrite:  false,
+      depthTest:   false,
+      blending:    THREE.CustomBlending,
+      blendSrc:    THREE.SrcAlphaFactor,
+      blendDst:    THREE.OneMinusSrcAlphaFactor,
     })
     const plane = new THREE.Mesh(planeGeom, this.voidMaterial)
     plane.renderOrder = 99
     this.group.add(plane)
 
-    // ── Splash particles (ink splatters ejected outward) ──
+    // ── Splash particles ────────────────────────────────────────────────────
     this.splashPositions  = new Float32Array(SPLASH_COUNT * 3)
-    this.splashVelocities = new Float32Array(SPLASH_COUNT * 3) // vx, vy, life
+    this.splashVelocities = new Float32Array(SPLASH_COUNT * 3)
     this.splashColors     = new Float32Array(SPLASH_COUNT * 3)
     this.splashSizes      = new Float32Array(SPLASH_COUNT)
+    this.splashRandSizes  = new Float32Array(SPLASH_COUNT)
 
     for (let i = 0; i < SPLASH_COUNT; i++) {
+      this.splashRandSizes[i] = 0.018 + Math.random() * 0.035 // pre-baked once
       this.respawnSplash(i)
     }
 
@@ -223,18 +209,19 @@ export class InfiniteVoidEffect extends EffectRenderer {
     this.splashGeom.setAttribute('size',     new THREE.BufferAttribute(this.splashSizes, 1))
 
     this.splashPoints = new THREE.Points(this.splashGeom, new THREE.PointsMaterial({
-      size: 0.04,
+      size:         0.04,
       vertexColors: true,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
+      transparent:  true,
+      opacity:      0,
+      // NormalBlending so dark-indigo dots are visible on the white void background
+      blending:   THREE.NormalBlending,
       depthWrite: false,
       sizeAttenuation: true,
     }))
     this.splashPoints.renderOrder = 101
     this.group.add(this.splashPoints)
 
-    // ── Debris particles (orbital) ──
+    // ── Debris particles ────────────────────────────────────────────────────
     this.debrisAngles    = new Float32Array(DEBRIS_COUNT)
     this.debrisRadii     = new Float32Array(DEBRIS_COUNT)
     this.debrisSpeeds    = new Float32Array(DEBRIS_COUNT)
@@ -242,20 +229,20 @@ export class InfiniteVoidEffect extends EffectRenderer {
 
     for (let i = 0; i < DEBRIS_COUNT; i++) {
       this.debrisAngles[i] = Math.random() * Math.PI * 2
-      this.debrisRadii[i]  = 0.25 + Math.random() * 1.2
-      this.debrisSpeeds[i] = 0.3 + Math.random() * 1.5
+      this.debrisRadii[i]  = 0.20 + Math.random() * 1.0
+      this.debrisSpeeds[i] = 0.25 + Math.random() * 1.2
     }
 
     this.debrisGeom = new THREE.BufferGeometry()
     this.debrisGeom.setAttribute('position', new THREE.BufferAttribute(this.debrisPositions, 3))
 
     this.debrisPoints = new THREE.Points(this.debrisGeom, new THREE.PointsMaterial({
-      color: 0x8cb8ff,
-      size: 0.02,
+      color: 0x06033a, // deep indigo — visible on white void
+      size:  0.022,
       transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
+      opacity:     0,
+      blending:    THREE.NormalBlending,
+      depthWrite:  false,
       sizeAttenuation: true,
     }))
     this.debrisPoints.renderOrder = 100
@@ -263,9 +250,8 @@ export class InfiniteVoidEffect extends EffectRenderer {
   }
 
   private respawnSplash(i: number): void {
-    // Start near void center, eject outward
     const angle = Math.random() * Math.PI * 2
-    const speed = 0.2 + Math.random() * 0.8
+    const speed = 0.15 + Math.random() * 0.65
     this.splashPositions[i * 3]     = 0
     this.splashPositions[i * 3 + 1] = 0
     this.splashPositions[i * 3 + 2] = 0
@@ -273,20 +259,13 @@ export class InfiniteVoidEffect extends EffectRenderer {
     this.splashVelocities[i * 3 + 1] = Math.sin(angle) * speed
     this.splashVelocities[i * 3 + 2] = 0 // life counter
 
-    // Color: mix of white, light blue, and occasional bright cyan
+    // Dark indigo fragments — legible against the white background
     const t = Math.random()
-    if (t < 0.4) {
-      // White
-      this.splashColors[i * 3] = 0.85; this.splashColors[i * 3 + 1] = 0.90; this.splashColors[i * 3 + 2] = 1.0
-    } else if (t < 0.7) {
-      // Light blue
-      this.splashColors[i * 3] = 0.3; this.splashColors[i * 3 + 1] = 0.6; this.splashColors[i * 3 + 2] = 1.0
+    if (t < 0.5) {
+      this.splashColors[i * 3] = 0.06; this.splashColors[i * 3 + 1] = 0.03; this.splashColors[i * 3 + 2] = 0.38
     } else {
-      // Dark blue
-      this.splashColors[i * 3] = 0.05; this.splashColors[i * 3 + 1] = 0.15; this.splashColors[i * 3 + 2] = 0.6
+      this.splashColors[i * 3] = 0.10; this.splashColors[i * 3 + 1] = 0.05; this.splashColors[i * 3 + 2] = 0.55
     }
-
-    this.splashSizes[i] = 0.02 + Math.random() * 0.06
   }
 
   spawn(): void {
@@ -299,8 +278,6 @@ export class InfiniteVoidEffect extends EffectRenderer {
 
   override beginDissipate(): void {
     this.targetOpacity = 0
-    this.darkenBackground = false  // stop darkening immediately when domain ends
-    // Don't call super — InfiniteVoid manages its own fade, isDone watches opacity
   }
 
   override get isDone(): boolean {
@@ -312,8 +289,7 @@ export class InfiniteVoidEffect extends EffectRenderer {
     this.buildUp = Math.min(this.buildUp + dt / this.BUILD_TIME, 1.0)
     this.opacity += (this.targetOpacity - this.opacity) * Math.min(dt * 1.5, 1)
 
-    // Drive distortion strength from build-up
-    this.distortionStrength = this.buildUp * this.opacity * 0.8
+    this.distortionStrength = this.buildUp * this.opacity * 0.6
 
     const u = this.voidMaterial.uniforms
     u.uTime.value    = this.time
@@ -321,55 +297,51 @@ export class InfiniteVoidEffect extends EffectRenderer {
     u.uBuildUp.value = this.buildUp
     u.uAspect.value  = window.innerWidth / window.innerHeight
 
-    // ── Update splash particles ──
+    // ── Update splash particles ─────────────────────────────────────────────
     const spAttr = this.splashGeom.attributes
     for (let i = 0; i < SPLASH_COUNT; i++) {
       let life = this.splashVelocities[i * 3 + 2]
       life += dt
 
-      if (life > 1.5 + Math.random() * 1.5) {
+      if (life > 1.5 + Math.random() * 1.0) {
         this.respawnSplash(i)
         life = 0
       }
 
       const vx = this.splashVelocities[i * 3]
       const vy = this.splashVelocities[i * 3 + 1]
-
-      // Decelerate + slight inward pull (gravity)
       const px = this.splashPositions[i * 3]
       const py = this.splashPositions[i * 3 + 1]
       const dist = Math.sqrt(px * px + py * py) + 0.01
-      const pull = 0.02 * this.buildUp / dist
+      const pull = 0.015 * this.buildUp / dist
 
       this.splashPositions[i * 3]     += (vx - px * pull) * dt
       this.splashPositions[i * 3 + 1] += (vy - py * pull) * dt
       this.splashVelocities[i * 3 + 2] = life
 
-      // Fade based on life
+      // Use pre-baked random sizes — no Math.random() in the hot loop
       const fade = life < 0.15 ? life / 0.15 : Math.max(0, 1 - (life - 0.5) / 1.5)
-      this.splashSizes[i] = (0.02 + Math.random() * 0.04) * fade * this.buildUp
+      this.splashSizes[i] = this.splashRandSizes[i] * fade * this.buildUp
     }
     ;(spAttr.position as THREE.BufferAttribute).needsUpdate = true
-    ;(spAttr.size as THREE.BufferAttribute).needsUpdate = true
-    ;(this.splashPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.7
+    ;(spAttr.size     as THREE.BufferAttribute).needsUpdate = true
+    ;(this.splashPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.80
 
-    // ── Update debris particles ──
+    // ── Update debris particles ─────────────────────────────────────────────
     const dPos = this.debrisGeom.attributes.position as THREE.BufferAttribute
     for (let i = 0; i < DEBRIS_COUNT; i++) {
       this.debrisAngles[i] += dt * this.debrisSpeeds[i] * (1 + (1 - this.debrisRadii[i]) * 1.5)
-      // Slow spiral inward
-      this.debrisRadii[i] -= dt * 0.03 * this.buildUp
-      if (this.debrisRadii[i] < 0.08) {
-        this.debrisRadii[i] = 0.4 + Math.random() * 1.0
+      this.debrisRadii[i]  -= dt * 0.025 * this.buildUp
+      if (this.debrisRadii[i] < 0.07) {
+        this.debrisRadii[i] = 0.35 + Math.random() * 0.85
         this.debrisAngles[i] = Math.random() * Math.PI * 2
       }
-
       dPos.array[i * 3]     = Math.cos(this.debrisAngles[i]) * this.debrisRadii[i]
       dPos.array[i * 3 + 1] = Math.sin(this.debrisAngles[i]) * this.debrisRadii[i]
       dPos.array[i * 3 + 2] = 0
     }
     dPos.needsUpdate = true
-    ;(this.debrisPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.5
+    ;(this.debrisPoints.material as THREE.PointsMaterial).opacity = this.opacity * this.buildUp * 0.55
   }
 
   setPosition(_pos: THREE.Vector3): void {
@@ -384,6 +356,6 @@ export class InfiniteVoidEffect extends EffectRenderer {
     ;(this.debrisPoints.material as THREE.Material).dispose()
   }
 
-  getBuildUp(): number  { return this.buildUp }
-  getOpacity(): number  { return this.opacity }
+  getBuildUp(): number { return this.buildUp }
+  getOpacity(): number { return this.opacity }
 }

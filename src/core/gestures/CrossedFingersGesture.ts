@@ -5,21 +5,38 @@ import type { HandData } from '@/types/hand'
 import { HandLandmark } from '@/types/hand'
 
 /**
- * Domain Expansion gesture: index + middle raised, ring + pinky folded, held 3 seconds.
- * Any 2-finger-up pose works — no crossing or specific spacing required.
+ * Two-finger-up pose (index + middle raised, ring + pinky folded).
+ *
+ * When domain is NOT active: hold 3 s → emit DOMAIN_EXPANSION
+ * When domain IS active:     hold 1 s → emit DOMAIN_EXIT
+ *
+ * AbilityManager calls setDomainActive() whenever domain state changes.
  */
 
-const HOLD_TIME_MS = 3000
-const COOLDOWN_MS  = 5000
+const ENTER_HOLD_MS = 3000
+const EXIT_HOLD_MS  = 1000
+const COOLDOWN_MS   = 5000
 
 export class CrossedFingersGesture extends Gesture {
   readonly type = GestureType.DOMAIN_EXPANSION
   readonly name = 'Domain Expansion'
 
-  private holdStartTime = 0
-  private holding       = false
-  private wasFired      = false
-  private lastFireTime  = 0
+  private holdStartTime  = 0
+  private holding        = false
+  private wasFired       = false
+  private lastFireTime   = 0
+  private domainIsActive = false
+
+  /** AbilityManager calls this when domain state changes. */
+  setDomainActive(active: boolean): void {
+    // Reset hold state when mode flips so we don't carry over a partial hold
+    if (active !== this.domainIsActive) {
+      this.holding       = false
+      this.wasFired      = false
+      this.holdStartTime = 0
+    }
+    this.domainIsActive = active
+  }
 
   detect(hands: HandData[], _deltaTime: number): GestureEvent | null {
     const hand = hands[0]
@@ -43,12 +60,15 @@ export class CrossedFingersGesture extends Gesture {
       this.holdStartTime = now
     }
 
-    const held = now - this.holdStartTime
-    if (held >= HOLD_TIME_MS && !this.wasFired && now - this.lastFireTime > COOLDOWN_MS) {
+    const holdMs    = this.domainIsActive ? EXIT_HOLD_MS  : ENTER_HOLD_MS
+    const fireType  = this.domainIsActive ? GestureType.DOMAIN_EXIT : GestureType.DOMAIN_EXPANSION
+    const held      = now - this.holdStartTime
+
+    if (held >= holdMs && !this.wasFired && now - this.lastFireTime > COOLDOWN_MS) {
       this.wasFired     = true
       this.lastFireTime = now
       return {
-        type:           GestureType.DOMAIN_EXPANSION,
+        type:           fireType,
         confidence:     1.0,
         timestamp:      now,
         handData:       hand,
@@ -59,10 +79,11 @@ export class CrossedFingersGesture extends Gesture {
     return null
   }
 
-  /** How far through the 3-second hold (0–1). Useful for a charge indicator. */
+  /** 0–1 progress through current hold (enter or exit). Useful for charge ring in HUD. */
   getHoldProgress(): number {
     if (!this.holding || this.wasFired) return 0
-    return Math.min((performance.now() - this.holdStartTime) / HOLD_TIME_MS, 1)
+    const holdMs = this.domainIsActive ? EXIT_HOLD_MS : ENTER_HOLD_MS
+    return Math.min((performance.now() - this.holdStartTime) / holdMs, 1)
   }
 
   private reset(): void {

@@ -68,6 +68,19 @@
         <span>Debug View</span>
       </label>
 
+      <!-- HD Offline mode -->
+      <div class="rec-section-label" style="margin-top:4px">Quality</div>
+      <label class="rec-option" title="Records raw camera at 20Mbps, then composites effects offline for maximum quality">
+        <input type="checkbox" v-model="hdMode" :disabled="recording" />
+        <span>HD Offline <span class="hd-badge">SLOW</span></span>
+      </label>
+
+      <!-- Composite progress bar (shown while processing) -->
+      <div v-if="compositing" class="composite-progress">
+        <div class="composite-label">Compositing… {{ Math.round(compositeProgress * 100) }}%</div>
+        <div class="composite-bar"><div class="composite-fill" :style="{ width: (compositeProgress * 100) + '%' }"></div></div>
+      </div>
+
       <div class="rec-actions">
         <button
           class="rec-btn"
@@ -93,9 +106,9 @@ import type { RecordingLayout, RecordingFormat, RecordingFps } from '@/core/Reco
 const fpsOptions: RecordingFps[] = [30, 60]
 
 const emit = defineEmits<{
-  start:         [opts: { layout: RecordingLayout; format: RecordingFormat; fps: RecordingFps; withEffects: boolean; withoutEffects: boolean; withDebug: boolean }]
-  stop:          []
-  abort:         []
+  start:           [opts: import('@/core/RecordingManager').RecordingStartOpts]
+  stop:            []
+  abort:           []
   'format-change': [format: RecordingFormat]
 }>()
 
@@ -113,17 +126,28 @@ const formats: { value: RecordingFormat; label: string; icon: string; hint: stri
   { value: '1:1',      label: '1 : 1',    icon: '⬜', hint: 'Instagram Square' },
 ]
 
-const expanded       = ref(false)
-const recording      = ref(false)
-const layout         = ref<RecordingLayout>('single')
-const format         = ref<RecordingFormat>('original')
-const withEffects    = ref(true)
-const withoutEffects = ref(false)
-const withDebug      = ref(false)
-const recFps         = ref<RecordingFps>(30)
-const elapsed        = ref(0)
-const formattedTime  = ref('0:00')
+const expanded          = ref(false)
+const recording         = ref(false)
+const compositing       = ref(false)
+const compositeProgress = ref(0)
+const layout            = ref<RecordingLayout>('single')
+const format            = ref<RecordingFormat>('original')
+const withEffects       = ref(true)
+const withoutEffects    = ref(false)
+const withDebug         = ref(false)
+const hdMode            = ref(false)
+const recFps            = ref<RecordingFps>(30)
+const elapsed           = ref(0)
+const formattedTime     = ref('0:00')
 let timer: ReturnType<typeof setInterval> | null = null
+
+// Exposed so GojoScene can drive the progress bar during offline compositing
+function setCompositing(active: boolean, progress = 0): void {
+  compositing.value = active
+  compositeProgress.value = progress
+}
+
+defineExpose({ setCompositing })
 
 const numOptions = computed(() =>
   (withEffects.value ? 1 : 0) + (withoutEffects.value ? 1 : 0) + (withDebug.value ? 1 : 0)
@@ -151,6 +175,7 @@ function toggleRecording() {
       withEffects: withEffects.value,
       withoutEffects: withoutEffects.value,
       withDebug: withDebug.value,
+      hdMode: hdMode.value,
     })
   }
 }
@@ -276,5 +301,41 @@ watch(format, (f) => emit('format-change', f), { immediate: true })
   font-size: 18px; font-weight: 700;
   font-family: 'Segoe UI', monospace;
   color: #ef4444; letter-spacing: 2px;
+}
+
+.hd-badge {
+  font-size: 8px; font-weight: 700; letter-spacing: 1px;
+  background: rgba(234,179,8,0.2); color: #eab308;
+  padding: 1px 4px; border-radius: 3px; margin-left: 4px;
+}
+
+.composite-progress {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.composite-label {
+  font-size: 10px; font-family: monospace; color: rgba(255,255,255,0.6);
+  text-align: center;
+}
+.composite-bar {
+  height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;
+}
+.composite-fill {
+  height: 100%; background: #7c3aed; border-radius: 2px; transition: width 0.2s;
+}
+
+@media (max-width: 480px) {
+  .rec-panel {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+  }
+  .rec-toggle { width: 48px; height: 48px; }
+  .rec-icon { width: 16px; height: 16px; }
+  .rec-body { min-width: 0; width: min(88vw, 220px); padding: 12px; gap: 7px; }
+  .layout-grid { grid-template-columns: 1fr 1fr; gap: 4px; }
+  .layout-btn { padding: 8px 4px; }
+  .layout-icon { font-size: 14px; }
+  .layout-name { font-size: 9px; }
+  .rec-option { font-size: 13px; }
+  .rec-btn { padding: 10px 0; font-size: 13px; min-height: 44px; }
 }
 </style>

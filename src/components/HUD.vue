@@ -29,6 +29,24 @@
       </div>
     </div>
 
+    <!-- Domain gesture hold ring (shows while charging in or out of domain) -->
+    <Transition name="hold-fade">
+      <div v-if="domainHoldProgress > 0.02" class="hold-ring-wrap">
+        <svg class="hold-ring-svg" viewBox="0 0 64 64">
+          <circle class="hold-ring-track" cx="32" cy="32" r="28" />
+          <circle
+            class="hold-ring-fill"
+            cx="32" cy="32" r="28"
+            :stroke="domainActive ? '#f87171' : '#93c5fd'"
+            :stroke-dashoffset="holdDashOffset"
+          />
+        </svg>
+        <span class="hold-ring-label" :style="{ color: domainActive ? '#f87171' : '#93c5fd' }">
+          {{ domainActive ? 'DISPELLING' : 'SUMMONING' }}
+        </span>
+      </div>
+    </Transition>
+
     <!-- Domain expansion active -->
     <Transition name="domain-fade">
       <div v-if="domainActive" class="domain-overlay">
@@ -41,13 +59,13 @@
 
     <!-- Bottom hint -->
     <div class="hint-row">
-      <span>Point finger → Blue / Red</span>
+      <span>Raise hand → Blue / Red</span>
       <span class="sep">·</span>
       <span>Bring together → Purple</span>
       <span class="sep">·</span>
-      <span>Pinch then flick → Shoot</span>
+      <span>Palm push → Shoot</span>
       <span class="sep">·</span>
-      <kbd>Space</kbd> Menu
+      <span>✌ hold → Domain</span>
       <span class="sep">·</span>
       <kbd>D</kbd> Debug
     </div>
@@ -78,9 +96,14 @@ const showMergeBar = computed(() =>
   !activeSet.value.has(GestureType.HANDS_MERGED)
 )
 
-const mergePercent  = computed(() => props.abilityDebug ? Math.round(props.abilityDebug.mergeProgress * 100) : 0)
-const domainActive  = computed(() => props.abilityDebug?.domainActive ?? false)
-const domainProgress = computed(() => props.abilityDebug?.domainProgress ?? 0)
+const mergePercent       = computed(() => props.abilityDebug ? Math.round(props.abilityDebug.mergeProgress * 100) : 0)
+const domainActive       = computed(() => props.abilityDebug?.domainActive ?? false)
+const domainProgress     = computed(() => props.abilityDebug?.domainProgress ?? 0)
+const domainHoldProgress = computed(() => props.abilityDebug?.domainHoldProgress ?? 0)
+
+// SVG ring: circumference = 2π×28 ≈ 175.9; dashoffset 0 = full ring, 175.9 = empty
+const CIRC = 2 * Math.PI * 28
+const holdDashOffset = computed(() => CIRC * (1 - domainHoldProgress.value))
 </script>
 
 <style scoped>
@@ -213,6 +236,44 @@ const domainProgress = computed(() => props.abilityDebug?.domainProgress ?? 0)
   transition: width 0.1s linear;
 }
 
+/* ── Domain hold ring ── */
+.hold-ring-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.hold-ring-svg {
+  width: 80px;
+  height: 80px;
+  transform: rotate(-90deg);
+}
+.hold-ring-track {
+  fill: none;
+  stroke: rgba(255,255,255,0.08);
+  stroke-width: 4;
+}
+.hold-ring-fill {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 175.9;
+  transition: stroke-dashoffset 0.05s linear;
+}
+.hold-ring-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  transform: none;
+}
+.hold-fade-enter-active, .hold-fade-leave-active { transition: opacity 0.25s ease; }
+.hold-fade-enter-from,  .hold-fade-leave-to      { opacity: 0; }
+
 /* ── Domain Expansion ── */
 .domain-overlay {
   position: absolute;
@@ -276,5 +337,25 @@ kbd {
   border-radius: 3px;
   background: rgba(255,255,255,0.05);
   color: rgba(255,255,255,0.4);
+}
+
+@media (max-width: 480px) {
+  .nameplate {
+    top: max(12px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
+  }
+  .ability-row {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 8px);
+    gap: 10px;
+  }
+  .slot-ring { width: 32px; height: 32px; }
+  .merge-bar-wrap {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 56px);
+  }
+  .hint-row { display: none; }
+  .domain-title { font-size: 18px; letter-spacing: 5px; }
+  .domain-bar-track { width: 180px; }
+  .hold-ring-svg { width: 70px; height: 70px; }
+  .hold-ring-label { font-size: 8px; letter-spacing: 2px; }
 }
 </style>

@@ -1,11 +1,13 @@
 import type { HandData } from '@/types/hand'
 import type { GestureEvent } from '@/types/gesture'
 import type { AbilityState } from '@/types/ability'
+import type { FaceData } from '@/types/face'
 
 export interface EventMap {
   handUpdate: HandData[]
   gestureDetected: GestureEvent
   abilityStateChange: { abilityName: string; state: AbilityState }
+  faceUpdate: FaceData | null
 }
 
 type Handler<T> = (payload: T) => void

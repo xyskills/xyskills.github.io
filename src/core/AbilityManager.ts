@@ -2,21 +2,28 @@ import * as THREE from 'three'
 import type { EventBus } from './EventBus'
 import type { SceneManager } from '@/rendering/SceneManager'
 import type { Ability } from './abilities/Ability'
+import { OrbAbility } from './abilities/OrbAbility'
 import { AbilityState } from '@/types/ability'
 import { GestureType } from '@/types/gesture'
 import type { GestureEvent } from '@/types/gesture'
 import type { HandData } from '@/types/hand'
+import { HandLandmark } from '@/types/hand'
 import { ShootEffect } from '@/rendering/effects/ShootEffect'
 import { HollowPurpleEffect } from '@/rendering/effects/HollowPurpleEffect'
 import { InfiniteVoidEffect } from '@/rendering/effects/InfiniteVoidEffect'
 import { MergeBeam } from '@/rendering/effects/MergeBeam'
+import { ChargeIndicator } from '@/rendering/effects/ChargeIndicator'
 import { SoundManager } from '@/core/SoundManager'
+import type { EventLog } from '@/core/EventLog'
+import type { CrossedFingersGesture } from './gestures/CrossedFingersGesture'
+import { OrbAbility } from './abilities/OrbAbility'
+import type { ForceField } from '@/rendering/ForceField'
 import {
-  getPinchMidpoint, getNormalizedPinchDistance,
+  getNormalizedPinchDistance,
   getHandByType, getHighestFingerTip,
 } from '@/utils/landmark-utils'
 
-const GRACE_PERIOD_MS     = 400
+const GRACE_PERIOD_MS     = 700
 const POST_SHOOT_BLOCK_MS = 2800
 const FLICK_COOLDOWN_MS   = 400
 const DOMAIN_DURATION_S   = 10.0   // seconds the Infinite Void stays active
@@ -41,6 +48,7 @@ export interface AbilityDebugState {
   recentEvents: { label: string; t: number }[]
   domainActive: boolean
   domainProgress: number   // 0..1
+  domainHoldProgress: number  // 0..1 — how far through the 2-finger hold gesture
 }
 
 export class AbilityManager {
@@ -65,6 +73,10 @@ export class AbilityManager {
   private lastNormPinch = 0
   private lastVelocity  = 0
 
+  // Pre-spawn charge indicators (one per hand side)
+  private chargeBlue: ChargeIndicator
+  private chargeRed:  ChargeIndicator
+
   // Domain expansion state
   private domainActive = false
   private domainEffect: InfiniteVoidEffect | null = null
@@ -72,6 +84,12 @@ export class AbilityManager {
 
   // Debug event log (last 8)
   private debugEvents: { label: string; t: number }[] = []
+
+  // Optional event log for offline composite
+  private eventLog: EventLog | null = null
+
+  // Reference to CrossedFingersGesture so we can toggle its domain mode
+  private domainGesture: CrossedFingersGesture | null = null
 
   private readonly ATTRACTION_RANGE = 2.2
   private readonly MERGE_TOUCH_DIST = 0.28  // must nearly overlap before fusing
@@ -81,6 +99,12 @@ export class AbilityManager {
     this.eventBus = eventBus
     this.sceneManager = sceneManager
     this.soundManager = new SoundManager()
+
+    this.chargeBlue = new ChargeIndicator(new THREE.Color(0.20, 0.55, 1.0))
+    this.chargeRed  = new ChargeIndicator(new THREE.Color(1.0,  0.08, 0.0))
+    this.sceneManager.addEffect(this.chargeBlue)
+    this.sceneManager.addEffect(this.chargeRed)
+
     this.eventBus.on('gestureDetected', (event) => this.onGesture(event))
     this.eventBus.on('handUpdate', (hands) => { this.latestHands = hands })
   }
@@ -88,6 +112,11 @@ export class AbilityManager {
   addAnimation(gestureTrigger: GestureType, abilityFactory: () => Ability): void {
     this.registry.set(gestureTrigger, abilityFactory)
   }
+
+  /** Pass the CrossedFingersGesture so AbilityManager can toggle its enter/exit mode. */
+  setDomainGesture(g: CrossedFingersGesture): void { this.domainGesture = g }
+
+  setEventLog(log: EventLog | null): void { this.eventLog = log }
 
   getDebugState(): AbilityDebugState {
     return {
@@ -103,8 +132,9 @@ export class AbilityManager {
         flickCooldown: performance.now() < this.lastFlickTime + FLICK_COOLDOWN_MS,
       },
       recentEvents: [...this.debugEvents],
-      domainActive:   this.domainActive,
-      domainProgress: this.domainActive ? Math.min(this.domainTimer / DOMAIN_DURATION_S, 1) : 0,
+      domainActive:      this.domainActive,
+      domainProgress:    this.domainActive ? Math.min(this.domainTimer / DOMAIN_DURATION_S, 1) : 0,
+      domainHoldProgress: this.domainGesture?.getHoldProgress() ?? 0,
     }
   }
 
@@ -118,12 +148,22 @@ export class AbilityManager {
   private onGesture(event: GestureEvent): void {
 
     if (event.type === GestureType.FINGER_FLICK_LEFT || event.type === GestureType.FINGER_FLICK_RIGHT) {
-      this.handleFlick()
+      this.handleFlick(event)
       return
     }
 
     if (event.type === GestureType.DOMAIN_EXPANSION) {
       this.activateDomain()
+      return
+    }
+
+    if (event.type === GestureType.DOMAIN_EXIT) {
+      this.deactivateDomain()
+      return
+    }
+
+    if (event.type === GestureType.PALM_THRUST_LEFT || event.type === GestureType.PALM_THRUST_RIGHT) {
+      this.handlePalmThrust(event)
       return
     }
 
@@ -138,6 +178,7 @@ export class AbilityManager {
 
   private activateDomain(): void {
     if (this.domainActive) return
+    this.domainGesture?.setDomainActive(true)
 
     // Clear all current abilities
     for (const [key, ability] of this.activeAbilities) {
@@ -156,17 +197,21 @@ export class AbilityManager {
     this.sceneManager.addEffect(this.domainEffect)
     this.domainEffect.spawn()
     this.soundManager.play('domain')
+    this.soundManager.haptic([200, 60, 200, 60, 300])
+    this.eventLog?.logDomain(true)
     this.logEvent('DOMAIN EXPANSION: Infinite Void')
   }
 
   private deactivateDomain(): void {
     if (!this.domainActive) return
+    this.domainGesture?.setDomainActive(false)
     if (this.domainEffect) {
       this.sceneManager.removeEffect(this.domainEffect)
       this.domainEffect = null
     }
     this.domainActive = false
     this.domainTimer  = 0
+    this.eventLog?.logDomain(false)
     this.logEvent('Domain: dissipated')
   }
 
@@ -175,7 +220,6 @@ export class AbilityManager {
     if (!factory || !event.anchorPosition) return
 
     this.lastSeenTime.set(event.type, performance.now())
-    let ability = this.activeAbilities.get(event.type)
 
     const handedness = event.type === GestureType.LEFT_HAND_RAISED ? 'Left' : 'Right'
     const hand = getHandByType(this.latestHands, handedness)
@@ -185,6 +229,18 @@ export class AbilityManager {
       anchorPoint = { x: tip.x, y: tip.y - 0.07, z: tip.z }
     }
 
+    // Charging: show buildup indicator, don't spawn yet
+    const indicator = event.type === GestureType.LEFT_HAND_RAISED ? this.chargeBlue : this.chargeRed
+    if (event.charging) {
+      const worldPos = this.sceneManager.landmarkToWorld(anchorPoint)
+      indicator.setCharge(event.confidence)
+      indicator.setPosition(worldPos)
+      return
+    }
+    // Full spawn: hide the charge indicator
+    indicator.setCharge(0)
+
+    let ability = this.activeAbilities.get(event.type)
     const worldPos = this.sceneManager.landmarkToWorld(anchorPoint)
 
     if (!ability) {
@@ -195,14 +251,32 @@ export class AbilityManager {
 
       if (event.type === GestureType.LEFT_HAND_RAISED) {
         this.soundManager.play('blue')
+        this.soundManager.haptic([60])
+        this.eventLog?.logSpawn('blue', anchorPoint.x, anchorPoint.y, anchorPoint.z ?? 0)
         this.logEvent('SPAWN Blue')
       } else if (event.type === GestureType.RIGHT_HAND_RAISED) {
         this.soundManager.play('red')
+        this.soundManager.haptic([60])
+        this.eventLog?.logSpawn('red', anchorPoint.x, anchorPoint.y, anchorPoint.z ?? 0)
         this.logEvent('SPAWN Red')
       }
     }
 
-    ability.onIdle(anchorPoint, worldPos)
+    // Depth-aware scaling: wrist z is negative when hand is close, positive when far
+    // Map z ≈ [-0.2, +0.1] → scale [1.4, 0.65]
+    let depthScale = 1.0
+    if (hand) {
+      const wristZ = hand.landmarks[HandLandmark.WRIST].z
+      depthScale = Math.max(0.5, Math.min(1.6, 1.0 - wristZ * 4.0))
+    }
+
+    if (event.type === GestureType.LEFT_HAND_RAISED) {
+      this.eventLog?.logPosition('blue', anchorPoint.x, anchorPoint.y, anchorPoint.z ?? 0, depthScale)
+    } else if (event.type === GestureType.RIGHT_HAND_RAISED) {
+      this.eventLog?.logPosition('red', anchorPoint.x, anchorPoint.y, anchorPoint.z ?? 0, depthScale)
+    }
+
+    ability.onIdle(anchorPoint, worldPos, depthScale)
   }
 
   private updateMerge(dt: number): void {
@@ -271,38 +345,104 @@ export class AbilityManager {
     this.sceneManager.addEffect(purple.getEffect())
     purple.onSpawn({ x: 0.5, y: 0.5, z: 0 })
     this.soundManager.play('purple')
+    this.soundManager.haptic([100, 40, 100])
+    this.eventLog?.logSpawn('purple', 0.5, 0.5, 0)
     this.logEvent('MERGE → Hollow Purple')
     this.pinchHeldFrames = 0
     this.pinchWasHeld    = false
     this.normPinchHistory = []
   }
 
-  private handleFlick(): void {
+  private handleFlick(event?: GestureEvent): void {
+    // Purple always takes priority — the pinch+flick gesture fires purple
     const purple = this.activeAbilities.get(GestureType.HANDS_MERGED)
-    if (!purple) return
+    if (purple) {
+      this.activeAbilities.delete(GestureType.HANDS_MERGED)
+      this.lastSeenTime.delete(GestureType.HANDS_MERGED)
+      this.pinchHeldFrames  = 0
+      this.pinchWasHeld     = false
+      this.normPinchHistory = []
+      this.lastFlickTime    = performance.now()
 
-    this.activeAbilities.delete(GestureType.HANDS_MERGED)
-    this.lastSeenTime.delete(GestureType.HANDS_MERGED)
-    this.pinchHeldFrames  = 0
-    this.pinchWasHeld     = false
-    this.normPinchHistory = []
-    this.lastFlickTime    = performance.now()
+      const shootColor = purple.config.color.clone()
+      const shootGlow  = purple.config.glowColor.clone()
 
-    const shootColor = purple.config.color.clone()
-    const shootGlow  = purple.config.glowColor.clone()
+      const shootEffect = new ShootEffect(shootColor, shootGlow, true)
+      shootEffect.setPosition(purple.getEffect().getObject3D().position.clone())
+      shootEffect.setVelocity(new THREE.Vector3(0, 0, 0))
+      shootEffect.spawn()
+      this.sceneManager.addEffect(shootEffect)
+      this.projectiles.push(shootEffect)
 
-    const shootEffect = new ShootEffect(shootColor, shootGlow, true)
-    shootEffect.setPosition(purple.getEffect().getObject3D().position.clone())
+      this.sceneManager.removeEffect(purple.getEffect())
+      this.sceneManager.clearDarkState()
+      this.soundManager.play('shoot')
+      this.soundManager.haptic([80])
+      this.eventLog?.logDissipate('purple')
+      this.eventLog?.logShoot(0.5, 0.5)
+      this.logEvent('FLICK → SHOOT!')
+      this.postShootBlockUntil = performance.now() + POST_SHOOT_BLOCK_MS
+      return
+    }
+
+    // Individual Blue / Red shoot: flick while holding a single orb launches it
+    if (!event || performance.now() < this.postShootBlockUntil) return
+    const abilityType = event.type === GestureType.FINGER_FLICK_LEFT
+      ? GestureType.LEFT_HAND_RAISED
+      : GestureType.RIGHT_HAND_RAISED
+    const ability = this.activeAbilities.get(abilityType)
+    if (!ability || ability.state !== AbilityState.IDLE) return
+
+    this.activeAbilities.delete(abilityType)
+    this.lastSeenTime.delete(abilityType)
+    this.lastFlickTime = performance.now()
+
+    const shootColor = ability.config.color.clone()
+    const shootGlow  = ability.config.glowColor.clone()
+
+    const shootEffect = new ShootEffect(shootColor, shootGlow, false)
+    shootEffect.setPosition(ability.getEffect().getObject3D().position.clone())
     shootEffect.setVelocity(new THREE.Vector3(0, 0, 0))
     shootEffect.spawn()
     this.sceneManager.addEffect(shootEffect)
     this.projectiles.push(shootEffect)
 
-    this.sceneManager.removeEffect(purple.getEffect())
-    this.sceneManager.clearDarkState()
+    this.sceneManager.removeEffect(ability.getEffect())
     this.soundManager.play('shoot')
-    this.logEvent('FLICK → SHOOT!')
-    this.postShootBlockUntil = performance.now() + POST_SHOOT_BLOCK_MS
+    this.soundManager.haptic([80])
+    const label = abilityType === GestureType.LEFT_HAND_RAISED ? 'blue' : 'red'
+    this.eventLog?.logDissipate(label)
+    this.logEvent(`FLICK → SHOOT ${label.toUpperCase()}!`)
+    this.postShootBlockUntil = performance.now() + 1000  // shorter cooldown than purple
+  }
+
+  private handlePalmThrust(event: GestureEvent): void {
+    if (this.domainActive) return
+    if (performance.now() < this.postShootBlockUntil) return
+
+    const abilityType = event.type === GestureType.PALM_THRUST_LEFT
+      ? GestureType.LEFT_HAND_RAISED
+      : GestureType.RIGHT_HAND_RAISED
+    const ability = this.activeAbilities.get(abilityType)
+    if (!ability || ability.state !== AbilityState.IDLE) return
+
+    this.activeAbilities.delete(abilityType)
+    this.lastSeenTime.delete(abilityType)
+
+    const shootEffect = new ShootEffect(ability.config.color.clone(), ability.config.glowColor.clone(), false)
+    shootEffect.setPosition(ability.getEffect().getObject3D().position.clone())
+    shootEffect.setVelocity(new THREE.Vector3(0, 0, 0))
+    shootEffect.spawn()
+    this.sceneManager.addEffect(shootEffect)
+    this.projectiles.push(shootEffect)
+
+    this.sceneManager.removeEffect(ability.getEffect())
+    this.soundManager.play('shoot')
+    this.soundManager.haptic([80])
+    const label = abilityType === GestureType.LEFT_HAND_RAISED ? 'blue' : 'red'
+    this.eventLog?.logDissipate(label)
+    this.logEvent(`THRUST → SHOOT ${label.toUpperCase()}!`)
+    this.postShootBlockUntil = performance.now() + 1000
   }
 
   update(deltaTime: number): void {
@@ -328,14 +468,21 @@ export class AbilityManager {
     const purple = this.activeAbilities.get(GestureType.HANDS_MERGED)
 
     if (purple && purple.state === AbilityState.IDLE && this.latestHands.length > 0) {
-      const lm = this.latestHands[0].landmarks
-      const pinch = getPinchMidpoint(lm)
-      const anchor = { x: pinch.x, y: pinch.y - 0.06, z: pinch.z }
-      purple.onIdle(anchor, this.sceneManager.landmarkToWorld(anchor))
+      // Average both hands' fingertip positions + wrist depths for accurate purple tracking
+      let ax = 0, ay = 0, az = 0, wz = 0
+      for (const hand of this.latestHands) {
+        const tip = getHighestFingerTip(hand.landmarks)
+        ax += tip.x; ay += tip.y; az += (tip.z ?? 0)
+        wz += hand.landmarks[HandLandmark.WRIST].z
+      }
+      const n = this.latestHands.length
+      const anchor = { x: ax / n, y: ay / n - 0.06, z: az / n }
+      const purpleDepth = Math.max(0.5, Math.min(1.6, 1.0 - (wz / n) * 4.0))
+      purple.onIdle(anchor, this.sceneManager.landmarkToWorld(anchor), purpleDepth)
       this.lastSeenTime.set(GestureType.HANDS_MERGED, performance.now())
 
-      // ── Normalized pinch flick detection ──
-      const rawNorm = getNormalizedPinchDistance(lm)
+      // ── Normalized pinch flick detection (use first available hand) ──
+      const rawNorm = getNormalizedPinchDistance(this.latestHands[0].landmarks)
 
       // 3-frame moving average to smooth MediaPipe jitter
       this.normPinchHistory.push(rawNorm)
@@ -374,9 +521,16 @@ export class AbilityManager {
       this.prevNormPinch    = 0
     }
 
+    // Collect force fields from active OrbAbilities → push to debris physics
+    const fields: ForceField[] = []
     for (const [, ability] of this.activeAbilities) {
       ability.update(deltaTime)
+      if (ability instanceof OrbAbility) {
+        const ff = ability.getForceField()
+        if (ff) fields.push(ff)
+      }
     }
+    this.sceneManager.setForceFields(fields)
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i]
@@ -403,7 +557,16 @@ export class AbilityManager {
         this.sceneManager.removeEffect(ability.getEffect())
         this.activeAbilities.delete(type)
         this.lastSeenTime.delete(type)
+        if (type === GestureType.LEFT_HAND_RAISED)  this.eventLog?.logDissipate('blue')
+        if (type === GestureType.RIGHT_HAND_RAISED) this.eventLog?.logDissipate('red')
         this.logEvent(`dissipate:${type}`)
+      }
+    }
+    // Reset charge indicators for any hand not currently gesturing
+    for (const type of [GestureType.LEFT_HAND_RAISED, GestureType.RIGHT_HAND_RAISED]) {
+      if (!detectedGestures.has(type) && !this.activeAbilities.has(type)) {
+        const ind = type === GestureType.LEFT_HAND_RAISED ? this.chargeBlue : this.chargeRed
+        ind.setCharge(0)
       }
     }
   }

@@ -410,14 +410,19 @@ export class SoundManager {
     src.start(start); src.stop(start + dur)
   }
 
-  private distCurve(amount: number): Float32Array {
+  /** Vibrate the device (Android Chrome). iOS silently ignores. */
+  haptic(pattern: number | number[]): void {
+    try { navigator.vibrate?.(pattern) } catch { /* not supported */ }
+  }
+
+  private distCurve(amount: number): Float32Array<ArrayBuffer> {
     const n = 44100
-    const c = new Float32Array(n)
+    const c = new Float32Array(n) as Float32Array<ArrayBuffer>
     const deg = Math.PI / 180
     for (let i = 0; i < n; i++) {
       const x = (i * 2) / n - 1
       c[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x))
     }
-    return c
+    return c as Float32Array<ArrayBuffer>
   }
 }

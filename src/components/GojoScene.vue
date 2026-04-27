@@ -16,6 +16,7 @@
     />
     <HUD :activeAbilities="activeAbilityNames" :abilityDebug="abilityDebugState" />
     <RecordingControls
+      ref="recordingControlsRef"
       @start="onRecStart"
       @stop="onRecStop"
       @abort="onRecAbort"
@@ -29,6 +30,7 @@
 </template>
 
 <script setup lang="ts">
+import * as THREE from 'three'
 import { ref, onMounted, onUnmounted } from 'vue'
 import { EventBus } from '@/core/EventBus'
 import { HandTracker } from '@/core/HandTracker'
@@ -38,8 +40,10 @@ import { SceneManager } from '@/rendering/SceneManager'
 import { HandRaisedGesture } from '@/core/gestures/HandRaisedGesture'
 import { FingerFlickGesture } from '@/core/gestures/FingerFlickGesture'
 import { CrossedFingersGesture } from '@/core/gestures/CrossedFingersGesture'
-import { BlueAbility } from '@/core/abilities/BlueAbility'
-import { RedAbility } from '@/core/abilities/RedAbility'
+import { PalmThrustGesture } from '@/core/gestures/PalmThrustGesture'
+import { OrbAbility } from '@/core/abilities/OrbAbility'
+import { BlueEffect } from '@/rendering/effects/BlueEffect'
+import { RedEffect } from '@/rendering/effects/RedEffect'
 import { HollowPurpleAbility } from '@/core/abilities/HollowPurpleAbility'
 import { GestureType } from '@/types/gesture'
 import type { GestureEvent } from '@/types/gesture'
@@ -51,19 +55,22 @@ import FormatGuide from './FormatGuide.vue'
 import { RecordingManager } from '@/core/RecordingManager'
 import type { RecordingStartOpts, RecordingFormat } from '@/core/RecordingManager'
 import type { AbilityDebugState } from '@/core/AbilityManager'
+import { EventLog } from '@/core/EventLog'
+import { OfflineRenderer } from '@/core/OfflineRenderer'
 import { getNormalizedPinchDistance, getHandSize } from '@/utils/landmark-utils'
 import { HandLandmark } from '@/types/hand'
 
-const videoRef         = ref<HTMLVideoElement>()
-const canvasRef        = ref<HTMLCanvasElement>()
-const debugOverlayRef  = ref<InstanceType<typeof DebugOverlay>>()
-const loading          = ref(true)
-const currentHands     = ref<HandData[]>([])
-const currentGestures  = ref<GestureEvent[]>([])
-const activeAbilityNames = ref<string[]>([])
-const fps              = ref(0)
-const effectsEnabled   = ref(true)
-const abilityDebugState = ref<AbilityDebugState | null>(null)
+const videoRef              = ref<HTMLVideoElement>()
+const canvasRef             = ref<HTMLCanvasElement>()
+const debugOverlayRef       = ref<InstanceType<typeof DebugOverlay>>()
+const recordingControlsRef  = ref<InstanceType<typeof RecordingControls>>()
+const loading               = ref(true)
+const currentHands          = ref<HandData[]>([])
+const currentGestures       = ref<GestureEvent[]>([])
+const activeAbilityNames    = ref<string[]>([])
+const fps                   = ref(0)
+const effectsEnabled        = ref(true)
+const abilityDebugState     = ref<AbilityDebugState | null>(null)
 
 const rawHandMetrics = ref<{
   normPinch: number
@@ -73,32 +80,77 @@ const rawHandMetrics = ref<{
 }[]>([])
 
 const recordingManager  = new RecordingManager()
+const eventLog          = new EventLog()
+const offlineRenderer   = new OfflineRenderer()
 const currentRecFormat  = ref<RecordingFormat>('original')
 const isRecording       = ref(false)
+let   hdModeActive      = false
+let   hdRecFormat: RecordingFormat = 'original'
+let   hdRecFps:    30 | 60        = 30
 
 function onRecStart(opts: RecordingStartOpts) {
   if (!canvasRef.value || !videoRef.value) return
+  hdModeActive = opts.hdMode ?? false
+  hdRecFormat  = opts.format
+  hdRecFps     = opts.fps
+
+  if (hdModeActive) {
+    // HD mode: record raw camera stream + event log; no Three.js canvas overhead
+    recordingManager.startRaw(videoRef.value)
+    eventLog.start()
+    abilityManager?.setEventLog(eventLog)
+    isRecording.value = true
+    return
+  }
+
   const debugCanvas = opts.withDebug
-    ? debugOverlayRef.value?.landmarkCanvas?.value ?? undefined
+    ? debugOverlayRef.value?.landmarkCanvas ?? undefined
     : undefined
+  // Drop to native 1× during recording — halves fill-rate vs 1.5× cap
+  sceneManager.setPixelRatio(1.0)
   recordingManager.start(canvasRef.value, videoRef.value, opts, debugCanvas)
   isRecording.value = true
 }
 
-function onRecStop() {
-  recordingManager.stop()
+async function onRecStop() {
   isRecording.value = false
+
+  if (hdModeActive) {
+    abilityManager?.setEventLog(null)
+    const events  = eventLog.stop()
+    const rawBlob = await recordingManager.stopRaw()
+    if (rawBlob) {
+      recordingControlsRef.value?.setCompositing(true, 0)
+      await offlineRenderer.composite(rawBlob, events, hdRecFormat, hdRecFps, (p) => {
+        recordingControlsRef.value?.setCompositing(true, p)
+      })
+      recordingControlsRef.value?.setCompositing(false)
+    }
+    hdModeActive = false
+    return
+  }
+
+  recordingManager.stop()
+  sceneManager.setPixelRatio(window.devicePixelRatio)
 }
 
 function onRecAbort() {
-  recordingManager.abort()
   isRecording.value = false
+  if (hdModeActive) {
+    abilityManager?.setEventLog(null)
+    eventLog.stop()
+    recordingManager.abortRaw()
+    hdModeActive = false
+    return
+  }
+  recordingManager.abort()
+  sceneManager.setPixelRatio(window.devicePixelRatio)
 }
 
 let eventBus: EventBus
 let handTracker: HandTracker
 let gestureRecognizer: GestureRecognizer
-let abilityManager: AbilityManager
+let abilityManager: AbilityManager | undefined
 let sceneManager: SceneManager
 let animationFrameId = 0
 let frameCount = 0
@@ -131,18 +183,62 @@ onMounted(async () => {
   gestureRecognizer.registerGesture(new HandRaisedGesture('Right'))
   gestureRecognizer.registerGesture(new FingerFlickGesture('Left'))
   gestureRecognizer.registerGesture(new FingerFlickGesture('Right'))
-  gestureRecognizer.registerGesture(new CrossedFingersGesture())
+  gestureRecognizer.registerGesture(new PalmThrustGesture('Left'))
+  gestureRecognizer.registerGesture(new PalmThrustGesture('Right'))
+
+  const domainGesture = new CrossedFingersGesture()
+  gestureRecognizer.registerGesture(domainGesture)
+  abilityManager!.setDomainGesture(domainGesture)
 
   // MediaPipe mirrors: user's right hand = "Left" label, user's left = "Right" label
-  abilityManager.addAnimation(GestureType.LEFT_HAND_RAISED, () => new RedAbility())
-  abilityManager.addAnimation(GestureType.RIGHT_HAND_RAISED, () => new BlueAbility())
-  abilityManager.addAnimation(GestureType.HANDS_MERGED, () => new HollowPurpleAbility())
+  // Red = user's right hand (LEFT label); Blue = user's left hand (RIGHT label)
+  abilityManager!.addAnimation(GestureType.LEFT_HAND_RAISED, () => new OrbAbility({
+    name:               'Cursed Technique Reversal: Red',
+    color:              new THREE.Color(0.9, 0.1, 0.05),
+    glowColor:          new THREE.Color(1.0, 0.4, 0.2),
+    particleCount:      250,
+    scale:              1,
+    EffectClass:        RedEffect,
+    videoUrl:           '/videos/effects/red_effect.webm',
+    forceFieldSign:     -1,
+    forceFieldRadius:   3.0,
+    forceFieldStrength: 12,
+  }))
+  abilityManager!.addAnimation(GestureType.RIGHT_HAND_RAISED, () => new OrbAbility({
+    name:               'Cursed Technique Lapse: Blue',
+    color:              new THREE.Color(0.05, 0.15, 0.9),
+    glowColor:          new THREE.Color(0.3, 0.6, 1.0),
+    particleCount:      200,
+    scale:              1,
+    EffectClass:        BlueEffect,
+    videoUrl:           '/videos/effects/blue_effect.webm',
+    forceFieldSign:     1,
+    forceFieldRadius:   2.5,
+    forceFieldStrength: 8,
+  }))
+  abilityManager!.addAnimation(GestureType.HANDS_MERGED, () => new HollowPurpleAbility())
 
   const detectedThisFrame = new Set<GestureType>()
 
   eventBus.on('handUpdate', (hands) => {
     currentHands.value = hands
     detectedThisFrame.clear()
+
+    // Compute debug metrics here (runs at MediaPipe rate, not every render frame)
+    rawHandMetrics.value = hands.map(hand => {
+      const lm = hand.landmarks
+      const normPinch = getNormalizedPinchDistance(lm)
+      const hs = getHandSize(lm)
+      const mcpSign = lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.MIDDLE_FINGER_MCP].x
+      const tipSign = lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x
+      const handWidth = Math.abs(lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.PINKY_MCP].x)
+      const crossDepth = Math.abs(lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x)
+      const fingersCrossed = (mcpSign * tipSign < 0)
+        && lm[HandLandmark.INDEX_FINGER_TIP].y < lm[HandLandmark.INDEX_FINGER_PIP].y
+        && lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y
+        && crossDepth > handWidth * 0.05
+      return { normPinch, wristSpeed: 0, fingersCrossed, handSize: hs }
+    })
   })
 
   eventBus.on('gestureDetected', (event) => {
@@ -156,6 +252,11 @@ onMounted(async () => {
       }),
       event,
     ]
+  })
+
+  // Feed face landmark data to the Six Eyes overlay in SceneManager
+  eventBus.on('faceUpdate', (face) => {
+    sceneManager.setFaceData(face)
   })
 
   try {
@@ -187,30 +288,10 @@ function startRenderLoop(detectedThisFrame: Set<GestureType>) {
       lastFpsTime = now
     }
 
-    abilityManager.removeAbilitiesForMissingHands(detectedThisFrame)
-    abilityManager.update(dt)
-    abilityDebugState.value = abilityManager.getDebugState()
-    activeAbilityNames.value = abilityDebugState.value.activeAbilities
-
-    // Compute raw per-hand metrics for debug overlay
-    rawHandMetrics.value = currentHands.value.map(hand => {
-      const lm = hand.landmarks
-      const normPinch = getNormalizedPinchDistance(lm)
-      const hs = getHandSize(lm)
-
-      // Wrist speed: simple frame-to-frame (stored across frames via closure isn't ideal,
-      // so we expose what we have — normPinch + handSize are the key ones)
-      const mcpSign = lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.MIDDLE_FINGER_MCP].x
-      const tipSign = lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x
-      const handWidth = Math.abs(lm[HandLandmark.INDEX_FINGER_MCP].x - lm[HandLandmark.PINKY_MCP].x)
-      const crossDepth = Math.abs(lm[HandLandmark.INDEX_FINGER_TIP].x - lm[HandLandmark.MIDDLE_FINGER_TIP].x)
-      const fingersCrossed = (mcpSign * tipSign < 0)
-        && lm[HandLandmark.INDEX_FINGER_TIP].y < lm[HandLandmark.INDEX_FINGER_PIP].y
-        && lm[HandLandmark.MIDDLE_FINGER_TIP].y < lm[HandLandmark.MIDDLE_FINGER_PIP].y
-        && crossDepth > handWidth * 0.05
-
-      return { normPinch, wristSpeed: 0, fingersCrossed, handSize: hs }
-    })
+    abilityManager?.removeAbilitiesForMissingHands(detectedThisFrame)
+    abilityManager?.update(dt)
+    abilityDebugState.value = abilityManager?.getDebugState() ?? null
+    activeAbilityNames.value = abilityDebugState.value?.activeAbilities ?? []
 
     sceneManager.render(dt, effectsEnabled.value)
     recordingManager.tick()
