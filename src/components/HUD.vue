@@ -65,9 +65,9 @@ const props = defineProps<{
 }>()
 
 const abilitySlots = [
-  { key: GestureType.RIGHT_HAND_RAISED, label: 'Red',           color: '#f87171', glowColor: 'rgba(248,113,113,0.4)', active: false },
+  { key: GestureType.LEFT_HAND_RAISED,  label: 'Red',           color: '#f87171', glowColor: 'rgba(248,113,113,0.4)', active: false },
   { key: GestureType.HANDS_MERGED,      label: 'Hollow Purple', color: '#a78bfa', glowColor: 'rgba(167,139,250,0.4)', active: false },
-  { key: GestureType.LEFT_HAND_RAISED,  label: 'Blue',          color: '#60a5fa', glowColor: 'rgba(96,165,250,0.4)',  active: false },
+  { key: GestureType.RIGHT_HAND_RAISED, label: 'Blue',          color: '#60a5fa', glowColor: 'rgba(96,165,250,0.4)',  active: false },
 ]
 
 const activeSet = computed(() => new Set(props.activeAbilities))
