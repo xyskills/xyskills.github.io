@@ -16,7 +16,6 @@ import { ChargeIndicator } from '@/rendering/effects/ChargeIndicator'
 import { SoundManager } from '@/core/SoundManager'
 import type { EventLog } from '@/core/EventLog'
 import type { CrossedFingersGesture } from './gestures/CrossedFingersGesture'
-import { OrbAbility } from './abilities/OrbAbility'
 import type { ForceField } from '@/rendering/ForceField'
 import {
   getNormalizedPinchDistance,
