@@ -38,6 +38,7 @@ export interface RecordingStartOpts {
   withEffects: boolean
   withoutEffects: boolean
   withDebug: boolean
+  hdMode?: boolean
 }
 
 // Crop a source to the target aspect ratio (center crop).
@@ -84,6 +85,10 @@ export class RecordingManager {
   private chunks:   Blob[] = []
   private canvas:   HTMLCanvasElement | null = null
   private ctx:      CanvasRenderingContext2D | null = null
+
+  // Raw camera stream recorder (for HD offline composite)
+  private _rawRecorder: MediaRecorder | null = null
+  private _rawChunks:   Blob[] = []
 
   get recording(): boolean { return this._recording }
 
@@ -301,5 +306,45 @@ export class RecordingManager {
     this.recorder = null; this.canvas = null; this.ctx = null
     this._effectsCanvas = null; this._videoElement = null; this._debugCanvas = null
     this.chunks = []
+  }
+
+  // ── Raw camera recorder (HD offline composite) ────────────────────────────
+
+  /** Start recording the raw camera stream at high quality. */
+  startRaw(videoElement: HTMLVideoElement): void {
+    const stream = videoElement.srcObject as MediaStream | null
+    if (!stream) return
+    this._rawChunks = []
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm;codecs=vp8'
+    this._rawRecorder = new MediaRecorder(stream, {
+      mimeType: mime,
+      videoBitsPerSecond: 20_000_000,  // 20 Mbps — high quality raw
+    })
+    this._rawRecorder.ondataavailable = (e) => { if (e.data.size > 0) this._rawChunks.push(e.data) }
+    this._rawRecorder.start(100)
+  }
+
+  /** Stop raw recording and return the captured Blob (or null on failure). */
+  async stopRaw(): Promise<Blob | null> {
+    if (!this._rawRecorder || this._rawRecorder.state === 'inactive') return null
+    return new Promise<Blob>((resolve) => {
+      this._rawRecorder!.onstop = () => {
+        const blob = new Blob(this._rawChunks, { type: this._rawRecorder!.mimeType })
+        this._rawRecorder = null
+        this._rawChunks   = []
+        resolve(blob)
+      }
+      this._rawRecorder!.stop()
+    })
+  }
+
+  /** Abort raw recording without saving. */
+  abortRaw(): void {
+    if (this._rawRecorder && this._rawRecorder.state !== 'inactive') {
+      this._rawRecorder.stop()
+    }
+    this._rawRecorder = null
+    this._rawChunks   = []
   }
 }

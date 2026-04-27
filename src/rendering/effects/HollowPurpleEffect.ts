@@ -124,6 +124,7 @@ export class HollowPurpleEffect extends EffectRenderer {
   private time = 0
   private flickReady = false
   private flashIntensity = 0
+  private depthScale = 1.0
 
   protected override spawnDur     = 0.70  // slow energy build-up
   protected override dissipateDur = 0.50  // dramatic chaos + fade
@@ -192,33 +193,13 @@ export class HollowPurpleEffect extends EffectRenderer {
     })
     this.group.add(this.fieldLines.getObject3D())
 
-    this.whiteCore  = this.glow(new THREE.Color(1.0,  0.97, 1.0),  0.35)
-    this.purpleCore = this.glow(new THREE.Color(0.80, 0.15, 1.0),  0.80)
-    this.innerGlow  = this.glow(new THREE.Color(0.55, 0.02, 0.90), 1.50)
-    this.outerGlow  = this.glow(new THREE.Color(0.22, 0.0,  0.55), 2.80)
+    this.whiteCore  = EffectRenderer.makeGlowSprite(new THREE.Color(1.0,  0.97, 1.0),  0.35)
+    this.purpleCore = EffectRenderer.makeGlowSprite(new THREE.Color(0.80, 0.15, 1.0),  0.80)
+    this.innerGlow  = EffectRenderer.makeGlowSprite(new THREE.Color(0.55, 0.02, 0.90), 1.50)
+    this.outerGlow  = EffectRenderer.makeGlowSprite(new THREE.Color(0.22, 0.0,  0.55), 2.80)
     for (const s of [this.whiteCore, this.purpleCore, this.innerGlow, this.outerGlow]) {
       this.group.add(s)
     }
-  }
-
-  private glow(color: THREE.Color, scale: number): THREE.Sprite {
-    const s = 256
-    const cv = document.createElement('canvas'); cv.width = s; cv.height = s
-    const ctx = cv.getContext('2d')!
-    const g = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2)
-    const [r, gv, b] = [color.r, color.g, color.b].map(v => Math.floor(v * 255))
-    g.addColorStop(0,    `rgba(${r},${gv},${b},1)`)
-    g.addColorStop(0.12, `rgba(${r},${gv},${b},0.85)`)
-    g.addColorStop(0.38, `rgba(${r},${gv},${b},0.4)`)
-    g.addColorStop(0.70, `rgba(${r},${gv},${b},0.08)`)
-    g.addColorStop(1,    'rgba(0,0,0,0)')
-    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s)
-    const mat = new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(cv), transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
-    })
-    const sp = new THREE.Sprite(mat); sp.scale.set(scale, scale, 1)
-    return sp
   }
 
   setFlickReady(ready: boolean): void { this.flickReady = ready }
@@ -252,7 +233,7 @@ export class HollowPurpleEffect extends EffectRenderer {
     // Dissipate: expands outward as the energy disperses
     const spawnScale     = EffectRenderer.easeOutBack(sT, 1.2)
     const dissipateScale = 1 + 0.6 * EffectRenderer.easeIn(dT, 0.8)
-    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale))
+    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale * this.depthScale))
 
     // ── Opacity envelope ──
     const appear    = EffectRenderer.easeOut(sT, 0.6)
@@ -360,6 +341,7 @@ export class HollowPurpleEffect extends EffectRenderer {
   }
 
   setPosition(pos: THREE.Vector3): void { this.group.position.copy(pos) }
+  override setScale(s: number): void { this.depthScale = s }
 
   dispose(): void {
     for (const b of this.thickBolts) b.dispose()

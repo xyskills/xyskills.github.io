@@ -1,10 +1,12 @@
 import * as THREE from 'three'
 import { Ability } from './Ability'
 import { HollowPurpleEffect } from '@/rendering/effects/HollowPurpleEffect'
+import { VideoEffectLayer } from '@/rendering/effects/VideoEffectLayer'
+import { CompositeEffect } from '@/rendering/effects/CompositeEffect'
 import type { EffectRenderer } from '@/rendering/effects/EffectRenderer'
 
 export class HollowPurpleAbility extends Ability {
-  private effect: HollowPurpleEffect
+  private effect: EffectRenderer
 
   constructor() {
     super({
@@ -14,7 +16,17 @@ export class HollowPurpleAbility extends Ability {
       particleCount: 500,
       scale: 1.5,
     })
-    this.effect = new HollowPurpleEffect()
+    // Hollow Purple video is fullscreen — the rendered lightning storm covers
+    // the entire frame additively on top of the real-time HollowPurpleEffect.
+    this.effect = new CompositeEffect(
+      new HollowPurpleEffect(),
+      new VideoEffectLayer({
+        url:       '/videos/effects/hollow_purple_effect.webm',
+        fullscreen: true,     // covers full screen
+        blending:   THREE.AdditiveBlending,
+        loop:       true,
+      }),
+    )
   }
 
   getEffect(): EffectRenderer {

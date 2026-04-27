@@ -23,11 +23,12 @@ export abstract class Ability {
     this.state = AbilityState.IDLE
   }
 
-  onIdle(anchorPosition: LandmarkPoint, worldPos: THREE.Vector3): void {
+  onIdle(anchorPosition: LandmarkPoint, worldPos: THREE.Vector3, depthScale = 1.0): void {
     this.state = AbilityState.IDLE
     this.normalizedAnchor = { ...anchorPosition }
     this.position.copy(worldPos)
     this.getEffect().setPosition(worldPos)
+    this.getEffect().setScale(depthScale)
     // Mirror X, flip Y: landmark y=0 is top, shader UV y=0 is bottom
     this.getEffect().normalizedPosition = { x: 1.0 - anchorPosition.x, y: 1.0 - anchorPosition.y }
   }

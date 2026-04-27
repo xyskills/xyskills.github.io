@@ -144,20 +144,22 @@ function onActivate() {
 function initParticles() {
   const cv = bgCanvas.value
   if (!cv) return
-  const ctx = cv.getContext('2d')!
+  // Non-null assertion required — cv is checked above but TypeScript loses narrowing in closures
+  const cvEl = cv as HTMLCanvasElement
+  const ctx = cvEl.getContext('2d')!
   const particles: { x: number; y: number; vx: number; vy: number; r: number; o: number }[] = []
 
   function resize() {
-    cv.width = cv.clientWidth * window.devicePixelRatio
-    cv.height = cv.clientHeight * window.devicePixelRatio
+    cvEl.width = cvEl.clientWidth * window.devicePixelRatio
+    cvEl.height = cvEl.clientHeight * window.devicePixelRatio
   }
   resize()
   window.addEventListener('resize', resize)
 
   for (let i = 0; i < 50; i++) {
     particles.push({
-      x: Math.random() * cv.clientWidth,
-      y: Math.random() * cv.clientHeight,
+      x: Math.random() * cvEl.clientWidth,
+      y: Math.random() * cvEl.clientHeight,
       vx: (Math.random() - 0.5) * 0.25,
       vy: (Math.random() - 0.5) * 0.25,
       r: 1 + Math.random() * 1.5,
@@ -167,7 +169,7 @@ function initParticles() {
 
   function draw() {
     const dpr = window.devicePixelRatio
-    const w = cv.clientWidth, h = cv.clientHeight
+    const w = cvEl.clientWidth, h = cvEl.clientHeight
     ctx.resetTransform()
     ctx.scale(dpr, dpr)
     ctx.clearRect(0, 0, w, h)
@@ -269,8 +271,8 @@ onUnmounted(() => cancelAnimationFrame(animId))
 @keyframes shimmer { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 
 .subtitle {
-  font-size: clamp(10px, 1.2vw, 13px);
-  letter-spacing: clamp(1px, 0.4vw, 4px);
+  font-size: clamp(11px, 2vw, 13px);
+  letter-spacing: clamp(1px, 0.8vw, 4px);
   text-transform: uppercase;
   color: rgba(255,255,255,0.25);
   font-weight: 500;
@@ -278,7 +280,7 @@ onUnmounted(() => cancelAnimationFrame(animId))
 
 /* ── Section ── */
 .section { display: flex; flex-direction: column; align-items: center; gap: clamp(8px, 1.2vh, 14px); width: 100%; max-width: 680px; }
-.section-label { display: flex; align-items: center; gap: 12px; font-size: clamp(9px, 1vw, 11px); font-weight: 600; letter-spacing: 3px; color: rgba(255,255,255,0.25); width: 100%; justify-content: center; }
+.section-label { display: flex; align-items: center; gap: 12px; font-size: clamp(9px, 2vw, 11px); font-weight: 600; letter-spacing: 2px; color: rgba(255,255,255,0.25); width: 100%; justify-content: center; }
 .label-line { flex: 1; max-width: 70px; height: 1px; background: linear-gradient(90deg, transparent, rgba(124,58,237,0.25), transparent); }
 
 /* ── Cards ── */
@@ -314,13 +316,13 @@ onUnmounted(() => cancelAnimationFrame(animId))
 
 .card.locked { opacity: 0.35; cursor: not-allowed; }
 
-.card-name { font-size: clamp(12px, 1.5vw, 15px); font-weight: 700; margin-bottom: 2px; white-space: nowrap; }
-.card-sub { font-size: clamp(9px, 1vw, 11px); color: rgba(255,255,255,0.4); line-height: 1.3; }
+.card-name { font-size: clamp(12px, 3vw, 15px); font-weight: 700; margin-bottom: 2px; white-space: normal; overflow-wrap: break-word; }
+.card-sub { font-size: clamp(10px, 2vw, 11px); color: rgba(255,255,255,0.4); line-height: 1.3; }
 
 /* ── Character avatar ── */
 .char-avatar {
-  width: clamp(44px, 6.5vw, 60px);
-  height: clamp(44px, 6.5vw, 60px);
+  width: clamp(44px, 11vw, 60px);
+  height: clamp(44px, 11vw, 60px);
   border-radius: 50%;
   border: 2px solid;
   display: flex;
@@ -331,10 +333,10 @@ onUnmounted(() => cancelAnimationFrame(animId))
   overflow: hidden;
 }
 .avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-.avatar-letter { font-size: clamp(18px, 2.5vw, 24px); font-weight: 800; opacity: 0.5; }
+.avatar-letter { font-size: clamp(18px, 4vw, 24px); font-weight: 800; opacity: 0.5; }
 
 .ability-tags { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; margin-top: 7px; }
-.tag { font-size: clamp(7px, 0.85vw, 9px); font-weight: 600; letter-spacing: 0.3px; padding: 2px 5px; border-radius: 3px; border: 1px solid; background: rgba(0,0,0,0.3); }
+.tag { font-size: clamp(8px, 1.8vw, 9px); font-weight: 600; letter-spacing: 0.3px; padding: 2px 5px; border-radius: 3px; border: 1px solid; background: rgba(0,0,0,0.3); }
 
 /* ── Lock / selection overlays ── */
 .lock-overlay { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.35); font-size: 8px; font-weight: 700; letter-spacing: 1.5px; border-radius: 14px; }
@@ -379,5 +381,27 @@ onUnmounted(() => cancelAnimationFrame(animId))
   color: rgba(255,255,255,0.45);
   font-family: inherit;
   letter-spacing: 0;
+}
+
+@media (max-width: 480px) {
+  .content {
+    padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    justify-content: flex-start;
+    padding-top: max(28px, env(safe-area-inset-top));
+  }
+  .title { font-size: 26px; letter-spacing: 4px; }
+  .subtitle { font-size: 11px; letter-spacing: 2px; }
+  .section-label { font-size: 9px; letter-spacing: 2px; }
+  .card { width: calc(50% - 5px); min-width: 0; }
+  .card-row { gap: 10px; }
+  .card-content { padding: 12px 8px 10px; }
+  .card-name { font-size: 13px; }
+  .card-sub { font-size: 10px; }
+  .char-avatar { width: 44px; height: 44px; }
+  .avatar-letter { font-size: 18px; }
+  .tag { font-size: 8px; padding: 2px 4px; }
+  .start-btn { font-size: 13px; padding: 14px 40px; letter-spacing: 3px; min-height: 52px; }
+  .kbd { display: none; }
+  .logo-mark { width: 36px; height: 36px; }
 }
 </style>

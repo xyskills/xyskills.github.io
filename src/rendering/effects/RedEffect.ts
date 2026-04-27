@@ -21,6 +21,7 @@ export class RedEffect extends EffectRenderer {
   private innerFlow: StreamLines
   private outerFlow: StreamLines
   private time = 0
+  private depthScale = 1.0
 
   protected override spawnDur     = 0.38  // fast slam-in
   protected override dissipateDur = 0.32  // violent burst
@@ -85,7 +86,7 @@ export class RedEffect extends EffectRenderer {
     // Dissipate: explodes outward — repulsion energy violently releases
     const spawnScale     = THREE.MathUtils.lerp(2.5, 1.0, EffectRenderer.easeOutBack(sT, 1.4))
     const dissipateScale = 1 + 1.8 * EffectRenderer.easeIn(dT, 0.5)
-    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale))
+    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale * this.depthScale))
 
     // Idle menacing pulse
     this.coreMesh.scale.setScalar(1 + 0.025 * Math.sin(this.time * 7))
@@ -114,6 +115,7 @@ export class RedEffect extends EffectRenderer {
   }
 
   setPosition(pos: THREE.Vector3): void { this.group.position.copy(pos) }
+  override setScale(s: number): void { this.depthScale = s }
 
   dispose(): void {
     this.coreMesh.geometry.dispose()

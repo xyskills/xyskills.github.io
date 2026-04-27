@@ -139,5 +139,8 @@ export abstract class EffectRenderer {
   abstract setPosition(pos: THREE.Vector3): void
   abstract dispose(): void
 
+  /** Depth-driven uniform scale. Subclasses override to apply; default is a no-op. */
+  setScale(_s: number): void { /* no-op */ }
+
   getObject3D(): THREE.Group { return this.group }
 }

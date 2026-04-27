@@ -47,49 +47,26 @@ export class ShootEffect extends EffectRenderer {
     })
     this.group.add(this.trailParticles.getObject3D())
 
-    this.coreGlow  = this.makeGlow(color,      isPurple ? 0.7 : 0.1)
+    this.coreGlow  = EffectRenderer.makeGlowSprite(color,      isPurple ? 0.7 : 0.1)
     this.group.add(this.coreGlow)
-    this.outerGlow = this.makeGlow(glowColor,   isPurple ? 1.4 : 0.18)
+    this.outerGlow = EffectRenderer.makeGlowSprite(glowColor,   isPurple ? 1.4 : 0.18)
     this.group.add(this.outerGlow)
 
     // Purple blast layers
-    this.flashSprite = this.makeGlow(new THREE.Color(0.75, 0.15, 1.0), isPurple ? 6.0 : 0)
+    this.flashSprite = EffectRenderer.makeGlowSprite(new THREE.Color(0.75, 0.15, 1.0), isPurple ? 6.0 : 0)
     this.group.add(this.flashSprite)
 
     // Firing flash — initial release burst
-    this.whiteFlash  = this.makeGlow(new THREE.Color(1.0, 0.97, 1.0), isPurple ? 10.0 : 0)
+    this.whiteFlash  = EffectRenderer.makeGlowSprite(new THREE.Color(1.0, 0.97, 1.0), isPurple ? 10.0 : 0)
     this.group.add(this.whiteFlash)
 
     // Impact flash — when it hits the camera
-    this.impactFlash = this.makeGlow(new THREE.Color(0.95, 0.8, 1.0), isPurple ? 14.0 : 0)
+    this.impactFlash = EffectRenderer.makeGlowSprite(new THREE.Color(0.95, 0.8, 1.0), isPurple ? 14.0 : 0)
     this.group.add(this.impactFlash)
 
     // Shockwave ring at medium time
-    this.shockwave   = this.makeGlow(new THREE.Color(0.9, 0.55, 1.0), isPurple ? 3.5 : 0)
+    this.shockwave   = EffectRenderer.makeGlowSprite(new THREE.Color(0.9, 0.55, 1.0), isPurple ? 3.5 : 0)
     this.group.add(this.shockwave)
-  }
-
-  private makeGlow(color: THREE.Color, scale: number): THREE.Sprite {
-    const size = 256
-    const canvas = document.createElement('canvas')
-    canvas.width = size; canvas.height = size
-    const ctx = canvas.getContext('2d')!
-    const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2)
-    const r = Math.floor(color.r * 255)
-    const gv = Math.floor(color.g * 255)
-    const b  = Math.floor(color.b * 255)
-    g.addColorStop(0,   `rgba(${r},${gv},${b},1)`)
-    g.addColorStop(0.2, `rgba(${r},${gv},${b},0.7)`)
-    g.addColorStop(0.5, `rgba(${r},${gv},${b},0.25)`)
-    g.addColorStop(1,   'rgba(0,0,0,0)')
-    ctx.fillStyle = g; ctx.fillRect(0, 0, size, size)
-    const mat = new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(canvas), transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0,
-    })
-    const sprite = new THREE.Sprite(mat)
-    sprite.scale.set(scale, scale, 1)
-    return sprite
   }
 
   setVelocity(vel: THREE.Vector3): void { this.velocity.copy(vel) }

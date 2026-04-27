@@ -68,6 +68,7 @@ export class BlueEffect extends EffectRenderer {
   private innerFlow: StreamLines
   private outerFlow: StreamLines
   private time = 0
+  private depthScale = 1.0
 
   protected override spawnDur     = 0.55  // elastic animation needs time to play
   protected override dissipateDur = 0.35  // snappy implosion
@@ -141,7 +142,7 @@ export class BlueEffect extends EffectRenderer {
     // Dissipate: hard implosion — collapses rapidly to a point
     const spawnScale     = EffectRenderer.easeOutElastic(sT)
     const dissipateScale = 1 - 0.97 * EffectRenderer.easeIn(dT, 1.6)
-    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale))
+    this.group.scale.setScalar(Math.max(0.001, spawnScale * dissipateScale * this.depthScale))
 
     // Idle breathing on just the sphere
     this.coreMesh.scale.setScalar(1 + 0.025 * Math.sin(this.time * 5))
@@ -188,6 +189,7 @@ export class BlueEffect extends EffectRenderer {
   }
 
   setPosition(pos: THREE.Vector3): void { this.group.position.copy(pos) }
+  override setScale(s: number): void { this.depthScale = s }
 
   dispose(): void {
     this.coreMesh.geometry.dispose()
