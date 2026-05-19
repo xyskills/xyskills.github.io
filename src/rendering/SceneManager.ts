@@ -2,9 +2,7 @@ import * as THREE from 'three'
 import type { LandmarkPoint } from '@/types/hand'
 import type { EffectRenderer } from './effects/EffectRenderer'
 import type { ForceField } from './ForceField'
-import type { FaceData } from '@/types/face'
 import { AmbientDebris } from './AmbientDebris'
-import { SixEyesEffect } from './effects/SixEyesEffect'
 import distortionVertShader from './shaders/distortion-bg.vert.glsl'
 import distortionFragShader from './shaders/distortion-bg.frag.glsl'
 
@@ -20,7 +18,6 @@ export class SceneManager {
   private frustumWidth  = 2
   private frustumHeight = 2
   private debris!: AmbientDebris
-  private sixEyes!: SixEyesEffect
   private activeForceFields: ForceField[] = []
   private readonly _distCenters   = [new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5), new THREE.Vector2(0.5, 0.5)]
   private readonly _distStrengths = [0, 0, 0]
@@ -86,9 +83,6 @@ export class SceneManager {
     this.debris = new AmbientDebris(this.frustumWidth, this.frustumHeight)
     this.scene.add(this.debris.getObject3D())
 
-    this.sixEyes = new SixEyesEffect()
-    this.scene.add(this.sixEyes.getObject3D())
-
     window.addEventListener('resize', () => this.onResize())
   }
 
@@ -117,11 +111,6 @@ export class SceneManager {
 
   /** Replace force fields for debris physics — called each frame by AbilityManager. */
   setForceFields(fields: ForceField[]): void { this.activeForceFields = fields }
-
-  /** Feed latest face detection data to the Six Eyes overlay. Pass null when no face found. */
-  setFaceData(face: FaceData | null): void {
-    this.sixEyes.setFaceData(face, this.frustumWidth, this.frustumHeight)
-  }
 
   /** Instantly restores full brightness — call when shooting purple. */
   clearDarkState(): void {
@@ -153,13 +142,9 @@ export class SceneManager {
     // Update time
     this.bgMaterial.uniforms.uTime.value += deltaTime
 
-    // Physics debris + Six Eyes
+    // Physics debris
     if (effectsEnabled) {
       this.debris.update(deltaTime, this.activeForceFields)
-      this.sixEyes.update(deltaTime)
-      this.sixEyes.getObject3D().visible = true
-    } else {
-      this.sixEyes.getObject3D().visible = false
     }
 
     // Collect distortion info — reuse pooled arrays, no allocations

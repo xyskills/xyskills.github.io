@@ -1,11 +1,9 @@
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import type { HandData } from '@/types/hand'
 import type { EventBus } from './EventBus'
-import { FaceTracker } from './FaceTracker'
 
 export class HandTracker {
   private handLandmarker: HandLandmarker | null = null
-  private faceTracker: FaceTracker
   private videoElement: HTMLVideoElement
   private eventBus: EventBus
   private running = false
@@ -27,7 +25,6 @@ export class HandTracker {
   constructor(videoElement: HTMLVideoElement, eventBus: EventBus) {
     this.videoElement = videoElement
     this.eventBus     = eventBus
-    this.faceTracker  = new FaceTracker(eventBus)
     this.detectionCanvas = document.createElement('canvas')
     this.detectionCanvas.width  = this.DETECT_W
     this.detectionCanvas.height = this.DETECT_H
@@ -37,22 +34,17 @@ export class HandTracker {
   async initialize(): Promise<void> {
     const vision = await FilesetResolver.forVisionTasks('/wasm')
 
-    // Load hand and face landmarkers from the same WASM context
-    const [handResult] = await Promise.all([
-      HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: '/models/hand_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 2,
-        minHandDetectionConfidence: 0.72,
-        minHandPresenceConfidence:  0.70,
-        minTrackingConfidence:      0.65,
-      }),
-      this.faceTracker.initialize(vision),
-    ])
-    this.handLandmarker = handResult
+    this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: '/models/hand_landmarker.task',
+        delegate: 'GPU',
+      },
+      runningMode: 'VIDEO',
+      numHands: 2,
+      minHandDetectionConfidence: 0.72,
+      minHandPresenceConfidence:  0.70,
+      minTrackingConfidence:      0.65,
+    })
 
     await this.startCamera()
   }
@@ -126,9 +118,6 @@ export class HandTracker {
         }
 
         this.eventBus.emit('handUpdate', hands)
-
-        // Face detection runs on the same downscaled frame — shares WASM runtime
-        this.faceTracker.detect(this.detectionCanvas, now)
       }
     }
 

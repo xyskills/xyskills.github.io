@@ -2,11 +2,11 @@ import * as THREE from 'three'
 import { EffectRenderer } from './EffectRenderer'
 
 /**
- * VideoEffectLayer — plays a pre-rendered Blender video as a Three.js texture
+ * VideoEffectLayer — plays a pre-rendered video as a Three.js texture
  * on top of the existing procedural effect.
  *
  * Usage flow:
- *   1. Run blender/blue_effect.py  → encode → public/videos/effects/blue_effect.webm
+ *   1. Generate the effect video → encode → public/videos/effects/blue_effect.webm
  *   2. VideoEffectLayer loads the video; if it 404s it silently does nothing (the
  *      procedural effect underneath still runs as the fallback).
  *   3. When the video is ready, it plays additive over the scene for cinema quality.
@@ -43,7 +43,7 @@ export interface VideoEffectConfig {
   url: string
   /** true = covers the full screen (Hollow Purple), false = positioned plane (Blue/Red) */
   fullscreen: boolean
-  /** World-space plane size when fullscreen=false. Matches the Blender ortho_scale=4 (±2 units). */
+  /** World-space plane size when fullscreen=false. */
   planeSize?: number
   /** Blending mode. Defaults to AdditiveBlending (adds glow on top). */
   blending?: THREE.Blending
@@ -118,8 +118,7 @@ export class VideoEffectLayer extends EffectRenderer {
     this.group.add(this.mesh)
 
     // ── Probe if the video file actually exists ───────────────────────────
-    // If the URL 404s (Blender hasn't been run yet), stay silent — the
-    // procedural effect underneath is the fallback.
+    // If the URL 404s, stay silent — the procedural effect underneath is the fallback.
     fetch(cfg.url, { method: 'HEAD' })
       .then(r => {
         if (!r.ok) return

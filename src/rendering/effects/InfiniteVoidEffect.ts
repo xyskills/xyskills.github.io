@@ -114,7 +114,7 @@ void main() {
   color  = mix(color, vec3(0.10, 0.08, 0.60), min(symBright * 0.55, 1.0));
   color += vec3(0.20, 0.25, 0.80) * min(symBright * 0.35, 0.8);
 
-  // ── CENTRE SINGULARITY — Gojo's Six Eyes ─────────────────────────────────
+  // ── CENTRE SINGULARITY ────────────────────────────────────────────────────
   float coreR    = 0.022 + build * 0.012;
   float coreHard = smoothstep(coreR, 0.0, r);
   float coreSoft = smoothstep(coreR * 9.0, coreR * 0.5, r);

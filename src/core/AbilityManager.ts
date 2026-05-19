@@ -161,11 +161,6 @@ export class AbilityManager {
       return
     }
 
-    if (event.type === GestureType.PALM_THRUST_LEFT || event.type === GestureType.PALM_THRUST_RIGHT) {
-      this.handlePalmThrust(event)
-      return
-    }
-
     // Block all ability gestures while domain is active
     if (this.domainActive) return
 
@@ -413,35 +408,6 @@ export class AbilityManager {
     this.eventLog?.logDissipate(label)
     this.logEvent(`FLICK → SHOOT ${label.toUpperCase()}!`)
     this.postShootBlockUntil = performance.now() + 1000  // shorter cooldown than purple
-  }
-
-  private handlePalmThrust(event: GestureEvent): void {
-    if (this.domainActive) return
-    if (performance.now() < this.postShootBlockUntil) return
-
-    const abilityType = event.type === GestureType.PALM_THRUST_LEFT
-      ? GestureType.LEFT_HAND_RAISED
-      : GestureType.RIGHT_HAND_RAISED
-    const ability = this.activeAbilities.get(abilityType)
-    if (!ability || ability.state !== AbilityState.IDLE) return
-
-    this.activeAbilities.delete(abilityType)
-    this.lastSeenTime.delete(abilityType)
-
-    const shootEffect = new ShootEffect(ability.config.color.clone(), ability.config.glowColor.clone(), false)
-    shootEffect.setPosition(ability.getEffect().getObject3D().position.clone())
-    shootEffect.setVelocity(new THREE.Vector3(0, 0, 0))
-    shootEffect.spawn()
-    this.sceneManager.addEffect(shootEffect)
-    this.projectiles.push(shootEffect)
-
-    this.sceneManager.removeEffect(ability.getEffect())
-    this.soundManager.play('shoot')
-    this.soundManager.haptic([80])
-    const label = abilityType === GestureType.LEFT_HAND_RAISED ? 'blue' : 'red'
-    this.eventLog?.logDissipate(label)
-    this.logEvent(`THRUST → SHOOT ${label.toUpperCase()}!`)
-    this.postShootBlockUntil = performance.now() + 1000
   }
 
   update(deltaTime: number): void {

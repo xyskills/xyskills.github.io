@@ -30,7 +30,6 @@
 </template>
 
 <script setup lang="ts">
-import * as THREE from 'three'
 import { ref, onMounted, onUnmounted } from 'vue'
 import { EventBus } from '@/core/EventBus'
 import { HandTracker } from '@/core/HandTracker'
@@ -40,11 +39,9 @@ import { SceneManager } from '@/rendering/SceneManager'
 import { HandRaisedGesture } from '@/core/gestures/HandRaisedGesture'
 import { FingerFlickGesture } from '@/core/gestures/FingerFlickGesture'
 import { CrossedFingersGesture } from '@/core/gestures/CrossedFingersGesture'
-import { PalmThrustGesture } from '@/core/gestures/PalmThrustGesture'
-import { OrbAbility } from '@/core/abilities/OrbAbility'
-import { BlueEffect } from '@/rendering/effects/BlueEffect'
-import { RedEffect } from '@/rendering/effects/RedEffect'
+import { BlueAbility } from '@/core/abilities/BlueAbility'
 import { HollowPurpleAbility } from '@/core/abilities/HollowPurpleAbility'
+import { RedAbility } from '@/core/abilities/RedAbility'
 import { GestureType } from '@/types/gesture'
 import type { GestureEvent } from '@/types/gesture'
 import type { HandData } from '@/types/hand'
@@ -183,39 +180,14 @@ onMounted(async () => {
   gestureRecognizer.registerGesture(new HandRaisedGesture('Right'))
   gestureRecognizer.registerGesture(new FingerFlickGesture('Left'))
   gestureRecognizer.registerGesture(new FingerFlickGesture('Right'))
-  gestureRecognizer.registerGesture(new PalmThrustGesture('Left'))
-  gestureRecognizer.registerGesture(new PalmThrustGesture('Right'))
 
   const domainGesture = new CrossedFingersGesture()
   gestureRecognizer.registerGesture(domainGesture)
   abilityManager!.setDomainGesture(domainGesture)
 
   // MediaPipe mirrors: user's right hand = "Left" label, user's left = "Right" label
-  // Red = user's right hand (LEFT label); Blue = user's left hand (RIGHT label)
-  abilityManager!.addAnimation(GestureType.LEFT_HAND_RAISED, () => new OrbAbility({
-    name:               'Cursed Technique Reversal: Red',
-    color:              new THREE.Color(0.9, 0.1, 0.05),
-    glowColor:          new THREE.Color(1.0, 0.4, 0.2),
-    particleCount:      250,
-    scale:              1,
-    EffectClass:        RedEffect,
-    videoUrl:           '/videos/effects/red_effect.webm',
-    forceFieldSign:     -1,
-    forceFieldRadius:   3.0,
-    forceFieldStrength: 12,
-  }))
-  abilityManager!.addAnimation(GestureType.RIGHT_HAND_RAISED, () => new OrbAbility({
-    name:               'Cursed Technique Lapse: Blue',
-    color:              new THREE.Color(0.05, 0.15, 0.9),
-    glowColor:          new THREE.Color(0.3, 0.6, 1.0),
-    particleCount:      200,
-    scale:              1,
-    EffectClass:        BlueEffect,
-    videoUrl:           '/videos/effects/blue_effect.webm',
-    forceFieldSign:     1,
-    forceFieldRadius:   2.5,
-    forceFieldStrength: 8,
-  }))
+  abilityManager!.addAnimation(GestureType.LEFT_HAND_RAISED, () => new RedAbility())
+  abilityManager!.addAnimation(GestureType.RIGHT_HAND_RAISED, () => new BlueAbility())
   abilityManager!.addAnimation(GestureType.HANDS_MERGED, () => new HollowPurpleAbility())
 
   const detectedThisFrame = new Set<GestureType>()
@@ -252,11 +224,6 @@ onMounted(async () => {
       }),
       event,
     ]
-  })
-
-  // Feed face landmark data to the Six Eyes overlay in SceneManager
-  eventBus.on('faceUpdate', (face) => {
-    sceneManager.setFaceData(face)
   })
 
   try {

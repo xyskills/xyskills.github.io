@@ -63,7 +63,7 @@
       <span class="sep">·</span>
       <span>Bring together → Purple</span>
       <span class="sep">·</span>
-      <span>Palm push → Shoot</span>
+      <span>Flick while holding → Shoot</span>
       <span class="sep">·</span>
       <span>✌ hold → Domain</span>
       <span class="sep">·</span>

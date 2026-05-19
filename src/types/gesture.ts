@@ -9,8 +9,6 @@ export enum GestureType {
   FINGER_FLICK_RIGHT = 'finger_flick_right',
   DOMAIN_EXPANSION = 'domain_expansion',
   DOMAIN_EXIT = 'domain_exit',
-  PALM_THRUST_LEFT = 'palm_thrust_left',
-  PALM_THRUST_RIGHT = 'palm_thrust_right',
 }
 
 export interface GestureEvent {
