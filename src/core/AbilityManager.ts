@@ -18,7 +18,7 @@ import type { EventLog } from '@/core/EventLog'
 import type { CrossedFingersGesture } from './gestures/CrossedFingersGesture'
 import type { ForceField } from '@/rendering/ForceField'
 import {
-  getNormalizedPinchDistance,
+  getPinchMidpoint, getNormalizedPinchDistance,
   getHandByType, getHighestFingerTip,
 } from '@/utils/landmark-utils'
 
@@ -433,21 +433,18 @@ export class AbilityManager {
     const purple = this.activeAbilities.get(GestureType.HANDS_MERGED)
 
     if (purple && purple.state === AbilityState.IDLE && this.latestHands.length > 0) {
-      // Average both hands' fingertip positions + wrist depths for accurate purple tracking
-      let ax = 0, ay = 0, az = 0, wz = 0
-      for (const hand of this.latestHands) {
-        const tip = getHighestFingerTip(hand.landmarks)
-        ax += tip.x; ay += tip.y; az += (tip.z ?? 0)
-        wz += hand.landmarks[HandLandmark.WRIST].z
-      }
-      const n = this.latestHands.length
-      const anchor = { x: ax / n, y: ay / n - 0.06, z: az / n }
-      const purpleDepth = Math.max(0.5, Math.min(1.6, 1.0 - (wz / n) * 4.0))
+      // Track purple on the pinch midpoint (thumb tip ↔ index tip) of the first available hand.
+      // Using a single stable hand avoids the orb jumping when hand ordering changes frame-to-frame.
+      const hand   = this.latestHands[0]
+      const lm     = hand.landmarks
+      const pinch  = getPinchMidpoint(lm)
+      const anchor = { x: pinch.x, y: pinch.y - 0.06, z: pinch.z }
+      const purpleDepth = Math.max(0.5, Math.min(1.6, 1.0 - lm[HandLandmark.WRIST].z * 4.0))
       purple.onIdle(anchor, this.sceneManager.landmarkToWorld(anchor), purpleDepth)
       this.lastSeenTime.set(GestureType.HANDS_MERGED, performance.now())
 
-      // ── Normalized pinch flick detection (use first available hand) ──
-      const rawNorm = getNormalizedPinchDistance(this.latestHands[0].landmarks)
+      // ── Normalized pinch flick detection (same hand that controls follow) ──
+      const rawNorm = getNormalizedPinchDistance(lm)
 
       // 3-frame moving average to smooth MediaPipe jitter
       this.normPinchHistory.push(rawNorm)
