@@ -14,7 +14,12 @@
       :rawMetrics="rawHandMetrics"
       @toggle-effects="effectsEnabled = !effectsEnabled"
     />
-    <HUD :activeAbilities="activeAbilityNames" :abilityDebug="abilityDebugState" />
+    <HUD
+      :activeAbilities="activeAbilityNames"
+      :abilityDebug="abilityDebugState"
+      :effectsEnabled="effectsEnabled"
+      @toggle-effects="effectsEnabled = !effectsEnabled"
+    />
     <RecordingControls
       ref="recordingControlsRef"
       @start="onRecStart"
@@ -153,6 +158,14 @@ let animationFrameId = 0
 let frameCount = 0
 let lastFpsTime = performance.now()
 
+function onSceneKeyDown(e: KeyboardEvent) {
+  if (document.activeElement?.tagName === 'INPUT') return
+  if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault()
+    effectsEnabled.value = !effectsEnabled.value
+  }
+}
+
 function waitForVideoDimensions(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve) => {
     if (video.videoWidth > 0 && video.videoHeight > 0) {
@@ -170,6 +183,7 @@ function waitForVideoDimensions(video: HTMLVideoElement): Promise<void> {
 onMounted(async () => {
   if (!videoRef.value || !canvasRef.value) return
 
+  window.addEventListener('keydown', onSceneKeyDown)
   eventBus = new EventBus()
   sceneManager = new SceneManager(canvasRef.value)
   handTracker = new HandTracker(videoRef.value, eventBus)
@@ -271,6 +285,7 @@ function startRenderLoop(detectedThisFrame: Set<GestureType>) {
 onUnmounted(() => {
   cancelAnimationFrame(animationFrameId)
   handTracker?.stop()
+  window.removeEventListener('keydown', onSceneKeyDown)
 })
 </script>
 

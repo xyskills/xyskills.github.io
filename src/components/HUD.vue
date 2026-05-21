@@ -31,7 +31,7 @@
 
     <!-- Domain gesture hold ring (shows while charging in or out of domain) -->
     <Transition name="hold-fade">
-      <div v-if="domainHoldProgress > 0.02" class="hold-ring-wrap">
+      <div v-if="domainHoldProgress > 0.02 && effectsEnabled !== false" class="hold-ring-wrap">
         <svg class="hold-ring-svg" viewBox="0 0 64 64">
           <circle class="hold-ring-track" cx="32" cy="32" r="28" />
           <circle
@@ -49,13 +49,23 @@
 
     <!-- Domain expansion active -->
     <Transition name="domain-fade">
-      <div v-if="domainActive" class="domain-overlay">
+      <div v-if="domainActive && effectsEnabled !== false" class="domain-overlay">
         <div class="domain-title">INFINITE VOID</div>
         <div class="domain-bar-track">
           <div class="domain-bar-fill" :style="{ width: (domainProgress * 100) + '%' }"></div>
         </div>
       </div>
     </Transition>
+
+    <!-- FX toggle button (always visible, top-right) -->
+    <button
+      class="fx-toggle-btn"
+      :class="{ 'fx-off': effectsEnabled === false }"
+      style="pointer-events: auto"
+      @click="$emit('toggle-effects')"
+    >
+      FX {{ effectsEnabled === false ? 'OFF' : 'ON' }}
+    </button>
 
     <!-- Bottom hint -->
     <div class="hint-row">
@@ -68,6 +78,8 @@
       <span>✌ hold → Domain</span>
       <span class="sep">·</span>
       <kbd>D</kbd> Debug
+      <span class="sep">·</span>
+      <kbd>F</kbd> FX
     </div>
   </div>
 </template>
@@ -80,7 +92,10 @@ import { GestureType } from '@/types/gesture'
 const props = defineProps<{
   activeAbilities: string[]
   abilityDebug?: AbilityDebugState | null
+  effectsEnabled?: boolean
 }>()
+
+defineEmits<{ 'toggle-effects': [] }>()
 
 const abilitySlots = [
   { key: GestureType.LEFT_HAND_RAISED,  label: 'Red',           color: '#f87171', glowColor: 'rgba(248,113,113,0.4)', active: false },
@@ -112,6 +127,34 @@ const holdDashOffset = computed(() => CIRC * (1 - domainHoldProgress.value))
   inset: 0;
   pointer-events: none;
   font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ── FX Toggle button ── */
+.fx-toggle-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'Segoe UI', system-ui, monospace;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(167,139,250,0.4);
+  background: rgba(167,139,250,0.12);
+  color: rgba(167,139,250,0.9);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.fx-toggle-btn:hover {
+  background: rgba(167,139,250,0.25);
+  border-color: rgba(167,139,250,0.7);
+}
+.fx-toggle-btn.fx-off {
+  border-color: rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.3);
 }
 
 /* ── Character nameplate ── */
