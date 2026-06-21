@@ -2,6 +2,13 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 import type { HandData } from '@/types/hand'
 import type { EventBus } from './EventBus'
 
+const withBase = (path: string): string => {
+  const base = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`
+  return `${base}${path.replace(/^\/+/, '')}`
+}
+
 export class HandTracker {
   private handLandmarker: HandLandmarker | null = null
   private videoElement: HTMLVideoElement
@@ -32,11 +39,11 @@ export class HandTracker {
   }
 
   async initialize(): Promise<void> {
-    const vision = await FilesetResolver.forVisionTasks('/wasm')
+    const vision = await FilesetResolver.forVisionTasks(withBase('/wasm'))
 
     this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: '/models/hand_landmarker.task',
+        modelAssetPath: withBase('/models/hand_landmarker.task'),
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',

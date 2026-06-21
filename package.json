@@ -4,9 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "vite --config vite.filter.config.ts",
+    "dev:docs": "vite --config apps/docs/vite.config.ts",
+    "build": "npm run build:docs && npm run build:filter",
+    "build:docs": "vite build --config apps/docs/vite.config.ts",
+    "build:filter": "vue-tsc --noEmit -p tsconfig.app.json && vite build --config vite.filter.config.ts",
+    "preview": "vite preview --config apps/docs/vite.config.ts"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.34",
